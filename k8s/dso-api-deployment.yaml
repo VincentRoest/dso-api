@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert -f ../docker-compose.yml
+    kompose.version: 1.22.0 (HEAD)
+  creationTimestamp: null
+  labels:
+    io.kompose.service: dso-api
+  name: dso-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: dso-api
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert -f ../docker-compose.yml
+        kompose.version: 1.22.0 (HEAD)
+      creationTimestamp: null
+      labels:
+        io.kompose.service: dso-api
+    spec:
+      containers:
+        - args:
+            - uwsgi
+            - --py-auto-reload=1
+          env:
+            - name: DATABASE_URL
+              value: postgres://dataservices:insecure@database/dataservices
+            - name: DJANGO_DEBUG
+              value: "0"
+            - name: SECRET_KEY
+              value: insecure
+            - name: UWSGI_CALLABLE
+              value: application
+            - name: UWSGI_HTTP_SOCKET
+              value: :8000
+            - name: UWSGI_MASTER
+              value: "1"
+            - name: UWSGI_MODULE
+              value: dso_api.wsgi
+            - name: UWSGI_STATIC_MAP
+              value: /dso_api/static=/static
+          image: dso-api
+          imagePullPolicy: Never
+          name: dso-api
+          ports:
+            - containerPort: 8000
+          resources: {}
+
+      restartPolicy: Always
+
+status: {}

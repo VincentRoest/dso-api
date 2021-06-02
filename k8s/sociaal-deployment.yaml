@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    team: datateam-sociaal
+  name: sociaal-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      team: datateam-sociaal
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        team: datateam-sociaal
+    spec:
+      containers:
+        - image: sociaal
+          imagePullPolicy: Never
+          name: sociaal
+          ports:
+            - containerPort: 8888
+          resources: {}
+
+      restartPolicy: Always
+
+status: {}

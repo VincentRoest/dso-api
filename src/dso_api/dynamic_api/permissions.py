@@ -49,8 +49,6 @@ def fetch_scopes_for_dataset_table(dataset_id: str, table_id: str):
 def fetch_scopes_for_model(model: Type[Model]) -> TableScopes:
     """Get the scopes for a Django model, based on the Amsterdam schema information"""
 
-    print(model)
-
     # If it is not a DSO-based model, we leave it alone
     if not hasattr(model, "_dataset_schema"):
         return TableScopes()

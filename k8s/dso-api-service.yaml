@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    kompose.cmd: kompose convert -f ../docker-compose.yml --volumes hostPath
+    kompose.version: 1.22.0 (HEAD)
+  creationTimestamp: null
+  labels:
+    io.kompose.service: dso-api
+  name: dso-api
+spec:
+  ports:
+    - name: "dso-api"
+      port: 8000
+      targetPort: 8000
+  type: LoadBalancer
+
+  selector:
+    io.kompose.service: dso-api
+status:
+  loadBalancer: {}
