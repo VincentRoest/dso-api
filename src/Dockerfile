@@ -20,6 +20,7 @@ COPY . ./
 ENV DJANGO_SETTINGS_MODULE=dso_api.settings DJANGO_DEBUG=false
 RUN python manage.py collectstatic --noinput
 
+
 EXPOSE 8000
 USER datapunt
 CMD ["uwsgi"]

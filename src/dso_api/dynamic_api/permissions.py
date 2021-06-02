@@ -25,7 +25,7 @@ class TableScopes:
 
 @ttl_cache(maxsize=None, ttl=60 * 60)
 def fetch_scopes_for_dataset_table(dataset_id: str, table_id: str):
-    """ Get the scopes for a dataset and table, based on the Amsterdam schema information """
+    """Get the scopes for a dataset and table, based on the Amsterdam schema information"""
 
     # Make sure that names are snake_cased
     # if used for a lookup in models.DatasetTable.objects
@@ -47,7 +47,9 @@ def fetch_scopes_for_dataset_table(dataset_id: str, table_id: str):
 
 @ttl_cache(ttl=60 * 60)
 def fetch_scopes_for_model(model: Type[Model]) -> TableScopes:
-    """ Get the scopes for a Django model, based on the Amsterdam schema information """
+    """Get the scopes for a Django model, based on the Amsterdam schema information"""
+
+    print(model)
 
     # If it is not a DSO-based model, we leave it alone
     if not hasattr(model, "_dataset_schema"):
@@ -156,7 +158,7 @@ class HasOAuth2Scopes(permissions.BasePermission):
             )
 
     def has_object_permission(self, request, view, obj):
-        """ This method is not called for list views """
+        """This method is not called for list views"""
         # XXX For now, this is OK, later on we need to add row-level permissions
         return self._has_permission(
             request,
