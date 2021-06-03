@@ -1,0 +1,32 @@
+# you can allow DSO in namespace DSO-namespace to talk to deployment sociaal
+# in namespace sociaal-namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dso-sociaal-communication
+  namespace: sociaal-namespace
+spec:
+  podSelector:
+    matchLabels:
+      team: datateam-sociaal
+      api: sociaal
+      networking/namespace: sociaal
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              networking/namespace: dso-namespace
+          podSelector:
+            matchLabels:
+              api: dso
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              networking/namespace: dso-namespace
+          podSelector:
+            matchLabels:
+              api: dso

@@ -1,20 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  namespace: sociaal-namespace
   labels:
     team: datateam-sociaal
+    api: sociaal
+    networking/namespace: sociaal
   name: sociaal-app
 spec:
   replicas: 1
   selector:
     matchLabels:
-      team: datateam-sociaal
+      api: sociaal
   strategy:
     type: Recreate
   template:
     metadata:
       labels:
         team: datateam-sociaal
+        api: sociaal
+        networking/namespace: sociaal
     spec:
       containers:
         - image: sociaal

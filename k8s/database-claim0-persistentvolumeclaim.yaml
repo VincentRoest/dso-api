@@ -1,9 +1,7 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  creationTimestamp: null
-  labels:
-    io.kompose.service: database-claim0
+  namespace: dso-namespace
   name: database-claim0
 spec:
   accessModes:

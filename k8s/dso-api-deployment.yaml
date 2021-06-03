@@ -1,28 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  annotations:
-    kompose.cmd: kompose convert -f ../docker-compose.yml
-    kompose.version: 1.22.0 (HEAD)
-  creationTimestamp: null
+  namespace: dso-namespace
   labels:
-    io.kompose.service: dso-api
+    team: datapunt
+    networking/namespace: dso
+    api: dso
   name: dso-api
 spec:
   replicas: 1
   selector:
     matchLabels:
-      io.kompose.service: dso-api
+      api: dso
   strategy:
     type: Recreate
   template:
     metadata:
-      annotations:
-        kompose.cmd: kompose convert -f ../docker-compose.yml
-        kompose.version: 1.22.0 (HEAD)
-      creationTimestamp: null
       labels:
-        io.kompose.service: dso-api
+        networking/namespace: dso
+        team: datapunt
+        api: dso
     spec:
       containers:
         - args:
