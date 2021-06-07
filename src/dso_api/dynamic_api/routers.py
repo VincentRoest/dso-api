@@ -142,6 +142,8 @@ class DynamicRouter(routers.DefaultRouter):
         generated_models = self._build_db_models(db_datasets)
         dataset_routes = self._build_db_viewsets(db_datasets)
 
+        # graphql routes
+
         # Same for remote API's
         api_datasets = list(get_active_datasets().endpoint_enabled())
         remote_routes = self._build_remote_viewsets(api_datasets)

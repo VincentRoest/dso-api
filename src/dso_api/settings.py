@@ -72,6 +72,8 @@ INSTALLED_APPS = [
     "schematools.contrib.django",
     # Own apps
     "dso_api.dynamic_api",
+    # graphql
+    "graphene_django",
 ]
 
 MIDDLEWARE = [
@@ -394,3 +396,6 @@ DATASETS_EXCLUDE = env.list("DATASETS_EXCLUDE", default=None)
 HAAL_CENTRAAL_API_KEY = os.getenv("HAAL_CENTRAAL_API_KEY", "UNKNOWN")
 HAAL_CENTRAAL_KEYFILE = os.getenv("HC_KEYFILE")
 HAAL_CENTRAAL_CERTFILE = os.getenv("HC_CERTFILE")
+
+
+GRAPHENE = {"SCHEMA": "dso_api.dynamic_api.schema.create_schema"}
