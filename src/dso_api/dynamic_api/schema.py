@@ -10,6 +10,7 @@ from graphql.type.definition import GraphQLResolveInfo
 from schematools.contrib.django.models import DatasetTable, DynamicModel
 from schematools.utils import to_snake_case
 
+from dso_api.dynamic_api.filterset import filterset_factory
 from dso_api.dynamic_api.permissions import (
     fetch_scopes_for_model,
     get_permission_key_for_field,
@@ -93,6 +94,10 @@ def create_schema(tables: List[DatasetTable]) -> graphene.Schema:
             if "name" in field_names or "class" in field_names:
                 continue
 
+            filterset = filterset_factory(model)
+            # some error with csv filterset? Not working with graphene
+            print(filterset)
+
             meta = type(
                 "Meta",
                 (object,),
@@ -100,12 +105,8 @@ def create_schema(tables: List[DatasetTable]) -> graphene.Schema:
                     "model": model,
                     "fields": "__all__",
                     # add actual filterable fields here.
-                    # filterset_class?
-                    "filter_fields": {
-                        "id": ["exact"],
-                    }
-                    if "id" in field_names
-                    else {},
+                    "filter_fields": {"id": "exact"} if "id" in field_names else {},
+                    # "filterset_class": filterset,
                     "interfaces": (relay.Node,),
                     "extra": {
                         "dataset_id": model.get_dataset_id(),
