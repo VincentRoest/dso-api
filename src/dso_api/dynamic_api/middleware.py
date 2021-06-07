@@ -83,4 +83,4 @@ class RequestAuditLoggingMiddleware(MiddlewareMixin):
             data=data,
         )
 
-        audit_log.info(json.dumps(log))
+        audit_log.debug(json.dumps(log))

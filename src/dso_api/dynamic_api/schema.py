@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Union
 
 import graphene
 from django.contrib.gis.db.models.fields import GeometryField
@@ -6,25 +6,84 @@ from graphene import relay
 from graphene_django import DjangoObjectType
 from graphene_django.converter import convert_django_field
 from graphene_django.filter import DjangoFilterConnectionField
-from schematools.contrib.django.models import DynamicModel
+from graphql.type.definition import GraphQLResolveInfo
+from schematools.contrib.django.models import DatasetTable, DynamicModel
+from schematools.utils import to_snake_case
 
-
-def make_resolver(record_name, record_cls):
-    def resolver(self, info):
-        print(info)
-        return info
-
-    resolver.__name__ = "resolve_%s" % record_name
-    return resolver
+from dso_api.dynamic_api.permissions import (
+    fetch_scopes_for_model,
+    get_permission_key_for_field,
+    request_has_permission,
+)
 
 
 @convert_django_field.register(GeometryField)
+# rest_framework_gis/fields.py
 def convert_json_field_to_string(field, registry=None):
-    return graphene.String()
+    return graphene.JSONString()
 
 
-def create_schema(tables: List[DynamicModel]) -> graphene.Schema:
+def field_based_auth(
+    root: DjangoObjectType, info: GraphQLResolveInfo, model: DynamicModel
+) -> Union[DjangoObjectType, None]:
+    """Adds field based authorization on a field in the GraphQL Schema based on the Model scopes
+    defined by the Amsterdam Schema.
+
+    Args:
+        root (DjangoObjectType): The Object that is about to be resolved
+        info (GraphQLResolveInfo): Contains the request of the root + user info
+        model_scopes (TableScopes): The TableScopes for this particular model
+
+    Returns:
+        Union[DjangoObjectType, None]: If allowed, return resolved value else None
+    """
+    request = info.context
+    model_scopes = fetch_scopes_for_model(model)
+
+    # profiles need testing
+    request.auth_profile.valid_query_params = (
+        # + view.table_schema.identifier
+        request.auth_profile.get_valid_query_params()
+    )
+
+    active_profiles = request.auth_profile.get_active_profiles(
+        model.get_dataset_id(), model.get_table_id()
+    )
+    print(active_profiles)
+
+    field_name = to_snake_case(info.field_name)
+
+    OK = getattr(root, to_snake_case(field_name))
+    DENY = None
+
+    if active_profiles:
+        return OK
+
+    if not hasattr(request, "is_authorized_for"):
+        return DENY
+
+    required = model_scopes.table
+    field_scope = model_scopes.fields.get(field_name)
+    if field_scope is not None:
+        required = required | set([field_scope])
+
+    if not request.is_authorized_for(*required):
+        permission_key = get_permission_key_for_field(field_name)
+        if not request_has_permission(request=request, perm=permission_key):
+            return DENY
+
+    return OK
+
+
+schema = None
+
+
+def create_schema(tables: List[DatasetTable]) -> graphene.Schema:
     record_schemas = {}
+    if globals()["schema"]:
+        print("Using cached schema")
+        return globals()["schema"]
+
     for table_name, table in tables.items():
         for model_name, model in table.items():
             class_name = f"{table_name}_{model_name}"
@@ -40,12 +99,18 @@ def create_schema(tables: List[DynamicModel]) -> graphene.Schema:
                 {
                     "model": model,
                     "fields": "__all__",
+                    # add actual filterable fields here.
+                    # filterset_class?
                     "filter_fields": {
                         "id": ["exact"],
                     }
                     if "id" in field_names
                     else {},
                     "interfaces": (relay.Node,),
+                    "extra": {
+                        "dataset_id": model.get_dataset_id(),
+                        "table_id": model.get_table_id(),
+                    },
                 },
             )
 
@@ -54,18 +119,30 @@ def create_schema(tables: List[DynamicModel]) -> graphene.Schema:
                 (DjangoObjectType,),
                 {
                     "Meta": meta,
+                    # add table authorization
+                    # TODO
+                    f"resolve_{table_name}": lambda root, info: field_based_auth(
+                        root,
+                        info,
+                        model,
+                    ),
+                    # adding field based authorization
+                    **{
+                        f"resolve_{field_name}": lambda root, info: field_based_auth(
+                            root,
+                            info,
+                            model,
+                        )
+                        for field_name in field_names
+                    },
                 },
             )
-
-            print(created_class)
 
             record_schemas[class_name] = created_class
 
     # create Query in similar way
     fields = {}
-    print(record_schemas)
     for key, rec in record_schemas.items():
-        print(key, rec)
         fields[key] = relay.Node.Field(rec)
         fields[f"all_{key}"] = DjangoFilterConnectionField(rec)
 
@@ -73,75 +150,10 @@ def create_schema(tables: List[DynamicModel]) -> graphene.Schema:
     fields["node"] = relay.Node.Field()
     Query = type("Query", (graphene.ObjectType,), fields)
 
-    return graphene.Schema(query=Query, types=list(record_schemas.values()))
+    schema = graphene.Schema(
+        query=Query,
+        types=list(record_schemas.values()),
+    )
 
-
-# def create_schema(tables: List[DynamicModel]) -> graphene.Schema:
-#     record_schemas = {}
-#     field_types = set()
-#     for table_name, table in tables.items():
-#         for model_name, model in table.items():
-#             fields = {}
-#             classname = f"{table_name}_{model_name}"
-#             for field in model._meta.get_fields():
-#                 field_type = field.get_internal_type()
-#                 # {'FloatField', 'BooleanField', 'ForeignKey',
-#                 # 'TimeField', 'LooseRelationManyToManyField', 'MultiLineStringField',
-#                 # 'CharField', 'DateTimeField', 'PointField', 'AutoField', 'LineStringField',
-#                 # 'DateField', 'ManyToManyField', 'GeometryField', 'ArrayField',
-#                 # 'BigIntegerField', 'MultiPolygonField', 'PolygonField'}
-
-#                 field_types.add(field_type)
-#                 # print(field_type, field)
-#                 field_type_mapping = {
-#                     "MultiLineStringField": graphene.String,
-#                     "BigIntegerField": graphene.Int,
-#                     "CharField": graphene.String,
-#                     # "ArrayField": graphene.List,
-#                     "DateTimeField": graphene.Date,
-#                     "FloatField": graphene.Decimal,
-#                     "BooleanField": graphene.Boolean,
-#                     "MultiLineStringField": graphene.String,
-#                     "LineStringField": graphene.String,
-#                     "DateField": graphene.Date,
-#                     "TimeField": graphene.Time,
-#                     "GeometryField": graphene.JSONString,
-#                     "MultiPolygonField": graphene.JSONString,
-#                     "PolygonField": graphene.JSONString,
-#                     "PointField": graphene.JSONString,
-#                     "ForeignKey": graphene.Connection,
-#                     "LooseRelationManyToManyField": graphene.Connection,
-#                     "AutoField": graphene.ID
-#                     # define types here
-#                 }
-#                 # graphql convention: no dots, no non-alphanumeric
-#                 field_name = str(field).split(".")[-1]
-#                 field_name = re.sub("[^0-9a-zA-Z_]+", "", field_name)
-
-#                 # keyword
-#                 if field_name == "class":
-#                     field_name = "klasse"
-#                 if field_name == "name":
-#                     field_name = "naam"
-
-#                 fields[field_name] = field_type_mapping.get(field_type, graphene.String)()
-
-#             rec_cls = type(
-#                 classname,
-#                 (DjangoObjectType,),
-#                 {"_meta": {model: model, fields: model._meta.get_fields()}},
-#                 name=model.get_display_field(),
-#                 description=model.get_dataset_schema().description,
-#             )
-#             record_schemas[classname] = rec_cls
-
-#     print(field_types)
-#     # create Query in similar way
-#     fields = {}
-#     for key, rec in record_schemas.items():
-#         print(key, rec)
-#         fields[key] = graphene.Field(rec)
-#         fields["resolve_%s" % key] = make_resolver(key, rec)
-#     Query = type("Query", (graphene.ObjectType,), fields)
-
-#     return graphene.Schema(query=Query, types=list(record_schemas.values()))
+    globals()["schema"] = schema
+    return schema
