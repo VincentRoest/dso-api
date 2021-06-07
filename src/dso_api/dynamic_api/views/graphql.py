@@ -53,7 +53,7 @@ class AuthorizationMiddleware:
 def graphql(request):
     from dso_api.dynamic_api.urls import router
 
-    schema = create_schema(router.all_models)
+    schema = create_schema(router.all_viewsets)
 
     return GraphQLView.as_view(
         schema=schema,

@@ -92,6 +92,7 @@ class DynamicRouter(routers.DefaultRouter):
     def __init__(self):
         super().__init__(trailing_slash=True)
         self.all_models = {}
+        self.all_viewsets = {}
         self.static_routes = []
         self._openapi_urls = []
 
@@ -206,6 +207,9 @@ class DynamicRouter(routers.DefaultRouter):
 
                 logger.debug("Created viewset %s", url_prefix)
                 viewset = viewset_factory(model)
+
+                self.all_viewsets[f"{dataset_id}-{model.get_table_id()}"] = viewset
+
                 table_id = to_snake_case(model.get_table_id())
                 tmp_router.register(
                     prefix=url_prefix,
@@ -227,11 +231,20 @@ class DynamicRouter(routers.DefaultRouter):
                 # Determine the URL prefix for the model
                 url_prefix = self.make_url(dataset.url_prefix, dataset_id, table.id)
                 serializer_class = remote_serializer_factory(table)
+
                 viewset = remote_viewset_factory(
                     endpoint_url=dataset.endpoint_url,
                     serializer_class=serializer_class,
                     table_schema=table,
                 )
+
+                print(viewset)
+                print(viewset.get_serializer)
+                print(viewset.client)
+                self.all_viewsets[
+                    f"remote-{to_snake_case(dataset_id)}-{to_snake_case(table.id)}"
+                ] = viewset
+
                 tmp_router.register(
                     prefix=url_prefix,
                     viewset=viewset,

@@ -7,10 +7,10 @@ from graphene_django import DjangoObjectType
 from graphene_django.converter import convert_django_field
 from graphene_django.filter import DjangoFilterConnectionField
 from graphql.type.definition import GraphQLResolveInfo
-from schematools.contrib.django.models import DatasetTable, DynamicModel
+from rest_framework.viewsets import ViewSet
+from schematools.contrib.django.models import DynamicModel
 from schematools.utils import to_snake_case
 
-from dso_api.dynamic_api.filterset import filterset_factory
 from dso_api.dynamic_api.permissions import (
     fetch_scopes_for_model,
     get_permission_key_for_field,
@@ -79,67 +79,72 @@ def field_based_auth(
 schema = None
 
 
-def create_schema(tables: List[DatasetTable]) -> graphene.Schema:
+def create_schema(viewsets: List[ViewSet]) -> graphene.Schema:
     record_schemas = {}
     if globals()["schema"]:
         print("Using cached schema")
         return globals()["schema"]
 
-    for table_name, table in tables.items():
-        for model_name, model in table.items():
-            class_name = f"{table_name}_{model_name}"
+    for viewset_name, viewset in viewsets.items():
+        if viewset_name.startswith("remote"):
+            continue
 
-            # for removing keywords from class defs
-            field_names = [str(f).split(".")[-1] for f in model._meta.get_fields()]
-            if "name" in field_names or "class" in field_names:
-                continue
+        field_names = viewset.get_serializer_class(viewset).Meta.fields
+        model = viewset.get_serializer_class(viewset).Meta.model
+        print(field_names)
+        if "name" in field_names or "class" in field_names:
+            continue
 
-            filterset = filterset_factory(model)
-            # some error with csv filterset? Not working with graphene
-            print(filterset)
+        # filterset = filterset_factory(model)
+        # some error with csv filterset? Not working with graphene
+        # print(model, field_names)
 
-            meta = type(
-                "Meta",
-                (object,),
-                {
-                    "model": model,
-                    "fields": "__all__",
-                    # add actual filterable fields here.
-                    "filter_fields": {"id": "exact"} if "id" in field_names else {},
-                    # "filterset_class": filterset,
-                    "interfaces": (relay.Node,),
-                    "extra": {
-                        "dataset_id": model.get_dataset_id(),
-                        "table_id": model.get_table_id(),
-                    },
+        meta = type(
+            "Meta",
+            (object,),
+            {
+                "model": model,
+                "fields": "__all__",
+                "serializer_class": viewset.get_serializer_class(viewset),
+                # add actual filterable fields here.
+                "filter_fields": {"id": ["exact"]} if "id" in field_names else {},
+                # "filterset_class": filterset,
+                "interfaces": (relay.Node,),
+                "extra": {
+                    "dataset_id": model.get_dataset_id(),
+                    "table_id": model.get_table_id(),
                 },
-            )
+            },
+        )
 
-            created_class = type(
-                class_name,
-                (DjangoObjectType,),
-                {
-                    "Meta": meta,
-                    # add table authorization
-                    # TODO
-                    f"resolve_{table_name}": lambda root, info: field_based_auth(
+        class_id = f"{model.get_dataset_id()}_{model.get_table_id()}"
+        # https://medium.com/@jefmoura/how-to-secure-graphql-in-drf-without-duplicating-code-5a033599db17
+        created_class = type(
+            class_id,
+            (DjangoObjectType,),
+            {
+                "Meta": meta,
+                # add table authorization
+                # TODO
+                # table name
+                f"resolve_{model}": lambda root, info: field_based_auth(
+                    root,
+                    info,
+                    model,
+                ),
+                # adding field based authorization
+                **{
+                    f"resolve_{field_name}": lambda root, info: field_based_auth(
                         root,
                         info,
                         model,
-                    ),
-                    # adding field based authorization
-                    **{
-                        f"resolve_{field_name}": lambda root, info: field_based_auth(
-                            root,
-                            info,
-                            model,
-                        )
-                        for field_name in field_names
-                    },
+                    )
+                    for field_name in field_names
                 },
-            )
+            },
+        )
 
-            record_schemas[class_name] = created_class
+        record_schemas[class_id] = created_class
 
     # create Query in similar way
     fields = {}
@@ -147,9 +152,9 @@ def create_schema(tables: List[DatasetTable]) -> graphene.Schema:
         fields[key] = relay.Node.Field(rec)
         fields[f"all_{key}"] = DjangoFilterConnectionField(rec)
 
-    # according to relay spec we need to add root field node
-    fields["node"] = relay.Node.Field()
-    Query = type("Query", (graphene.ObjectType,), fields)
+        # according to relay spec we need to add root field node
+        fields["node"] = relay.Node.Field()
+        Query = type("Query", (graphene.ObjectType,), fields)
 
     schema = graphene.Schema(
         query=Query,
