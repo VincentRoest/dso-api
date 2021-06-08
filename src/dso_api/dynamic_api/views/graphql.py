@@ -55,8 +55,11 @@ def graphql(request):
 
     schema = create_schema(router.all_viewsets)
 
-    return GraphQLView.as_view(
-        schema=schema,
-        graphiql=True,
-        middleware=[AuthorizationMiddleware],
-    )(request)
+    try:
+        return GraphQLView.as_view(
+            schema=schema,
+            graphiql=True,
+        )(request)
+    except Exception as e:
+        # 500 error
+        print(e)
