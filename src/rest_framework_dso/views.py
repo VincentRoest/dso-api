@@ -6,6 +6,7 @@ from typing import Optional, Type, Union
 from django.http import HttpResponseNotFound, JsonResponse
 from rest_framework import status
 from rest_framework.exceptions import APIException, ErrorDetail, NotAcceptable, ValidationError
+from rest_framework.parsers import JSONParser
 from rest_framework.renderers import JSONRenderer
 from rest_framework.request import Request
 from rest_framework.serializers import ListSerializer
@@ -248,7 +249,7 @@ class DSOViewMixin:
     filterset_class: Type[filters.DSOFilterSet] = None
 
     #: Enforce parsing Content-Crs for POST requests:
-    parser_classes = [parsers.DSOJsonParser]
+    parser_classes = [JSONParser, parsers.DSOJsonParser]
 
     #: Paginator class
     pagination_class = AutoSelectPaginationClass(default=DSOPageNumberPagination)

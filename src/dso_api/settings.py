@@ -23,7 +23,7 @@ DEBUG = env.bool("DJANGO_DEBUG", True)
 
 CLOUD_ENV = env.str("CLOUD_ENV", "unspecified")
 DJANGO_LOG_LEVEL = env.str("DJANGO_LOG_LEVEL", "INFO")
-DSO_API_LOG_LEVEL = env.str("DSO_API_LOG_LEVEL", "DEBUG")
+DSO_API_LOG_LEVEL = env.str("DSO_API_LOG_LEVEL", "INFO")
 DSO_API_AUDIT_LOG_LEVEL = env.str("DSO_API_AUDIT_LOG_LEVEL", "INFO")
 
 # Paths
@@ -297,6 +297,7 @@ REST_FRAMEWORK = dict(
     DEFAULT_PAGINATION_CLASS="rest_framework_dso.pagination.DSOPageNumberPagination",
     DEFAULT_SCHEMA_CLASS="rest_framework_dso.openapi.DSOAutoSchema",
     DEFAULT_RENDERER_CLASSES=[
+        "rest_framework.renderers.JSONRenderer",
         "rest_framework_dso.renderers.HALJSONRenderer",
         "rest_framework_dso.renderers.CSVRenderer",
         "rest_framework_dso.renderers.GeoJSONRenderer",

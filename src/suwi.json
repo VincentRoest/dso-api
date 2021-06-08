@@ -60,48 +60,6 @@
             "description": "geboortedatum.",
             "auth": "SUWI/TOETS_PLUS"
           },
-          "inkomenBronnen": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "naam": {
-                  "type": "string",
-                  "auth": "SUWI/TOETS"
-                },
-                "bedrag": {
-                  "type": "integer",
-                  "auth": "SUWI/TOETS_PLUS"
-                }
-              }
-            },
-            "description": "Alle bekende inkomenbronnen van dit persoon"
-          },
-          "bankrekeningen": {
-            "type": "array",
-            "auth": [
-              "SUWI/TOETS",
-              "SUWI/TOETS_PLUS"
-            ],
-            "items": {
-              "type": "object",
-              "properties": {
-                "iban": {
-                  "type": "string",
-                  "auth": "SUWI/TOETS_PLUS"
-                },
-                "iban_masked": {
-                  "type": "string",
-                  "auth": "SUWI/TOETS"
-                },
-                "saldo": {
-                  "type": "integer",
-                  "auth": "SUWI/TOETS_PLUS"
-                }
-              }
-            },
-            "description": "Alle bekende bankrekeningen van dit persoon"
-          },
           "toetsInkomenTeHoog": {
             "auth": "SUWI/TOETS",
             "type": "boolean",

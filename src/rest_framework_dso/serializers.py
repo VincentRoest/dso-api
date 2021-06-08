@@ -465,6 +465,59 @@ class DSOSerializer(ExpandMixin, serializers.Serializer):
 
         return None
 
+    def create(self, validated_data):
+        print(self.context["view"])
+
+        def set_relations_recursively(model, data, current_key=None):
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    print(key)
+                    # expand
+                    if isinstance(value, list):
+                        print("list")
+                        print("skipping", value)
+                        print(model._meta.get_fields())
+                        # TODO
+                        # irect assignment to the reverse side of a related set
+                        # is prohibited. Use bankrekeningen.set() instead.",
+                        # setattr(model, key, [])
+                        # set_relations_recursively(model, value, key)
+                    else:
+                        setattr(model, key, value)
+            elif isinstance(data, list):
+                for value in data:
+                    if isinstance(value, list):
+                        print("skipping", value)
+                        # setattr(model, current_key, [])
+                        # set_relations_recursively(model, value, current_key)
+                    else:
+                        setattr(model, current_key, value)
+
+            return model
+
+        flat_model = self.context["view"].model(
+            **{
+                k: f
+                for k, f in validated_data.items()
+                if k != "toetsInkomenTeHoog" and k != "toetsVermogenTeHoog"
+            }
+        )
+        print("hi")
+        # flat_model = set_relations_recursively(flat_model, validated_data)
+        # print(vars(flat_model))
+        # print(dir(flat_model))
+        setattr(flat_model, "model", flat_model)
+        # print(flat_model.get_queryset())
+        return flat_model
+
+    def update(self, instance, validated_data):
+        print(instance)
+        for k, f in validated_data.items():
+            print(f)
+            setattr(instance, k, f)
+        # instance.save()
+        return instance
+
 
 class DSOModelSerializer(DSOSerializer, serializers.HyperlinkedModelSerializer):
     """DSO-compliant serializer for Django models.

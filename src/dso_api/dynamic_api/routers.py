@@ -143,8 +143,6 @@ class DynamicRouter(routers.DefaultRouter):
         generated_models = self._build_db_models(db_datasets)
         dataset_routes = self._build_db_viewsets(db_datasets)
 
-        # graphql routes
-
         # Same for remote API's
         api_datasets = list(get_active_datasets().endpoint_enabled())
         remote_routes = self._build_remote_viewsets(api_datasets)
@@ -223,14 +221,26 @@ class DynamicRouter(routers.DefaultRouter):
         """Initialize viewsets that are are proxies for remote URLs"""
         tmp_router = routers.SimpleRouter()
 
+        # Because dataset are related, we need to 'prewarm'
+        # the datatasets cache (in schematools)
         for dataset in api_datasets:
             schema = dataset.schema
             dataset_id = schema.id
 
+            new_models = {}
+            dataset.enable_db = True
+            for model in dataset.create_models(base_app_name="dso_api.dynamic_api.remote"):
+                new_models[model._meta.model_name] = model
+            dataset.enable_db = False
+
             for table in schema.tables:
                 # Determine the URL prefix for the model
                 url_prefix = self.make_url(dataset.url_prefix, dataset_id, table.id)
-                serializer_class = remote_serializer_factory(table)
+
+                model_for_table = new_models[f"{table.id}"]
+
+                serializer_class = remote_serializer_factory(table, model_for_table)
+                print(serializer_class)
 
                 viewset = remote_viewset_factory(
                     endpoint_url=dataset.endpoint_url,
@@ -238,9 +248,8 @@ class DynamicRouter(routers.DefaultRouter):
                     table_schema=table,
                 )
 
-                print(viewset)
-                print(viewset.get_serializer)
-                print(viewset.client)
+                setattr(viewset, "model", model_for_table)
+
                 self.all_viewsets[
                     f"remote-{to_snake_case(dataset_id)}-{to_snake_case(table.id)}"
                 ] = viewset

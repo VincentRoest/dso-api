@@ -10,6 +10,7 @@ from django.conf import settings
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
+from schematools.contrib.django.models import DynamicModel
 from schematools.types import DatasetFieldSchema, DatasetTableSchema
 from schematools.utils import to_snake_case, toCamelCase
 
@@ -68,7 +69,7 @@ class RemoteObjectSerializer(DSOSerializer):
     field_schema = None  # defined by factory
 
 
-def remote_serializer_factory(table_schema: DatasetTableSchema):
+def remote_serializer_factory(table_schema: DatasetTableSchema, model: DynamicModel):
     """Generate the DRF serializer class for a specific dataset model."""
     dataset = table_schema._parent_schema
     serializer_name = (f"{dataset.id.title()}{table_schema.id.title()}Serializer").replace(
@@ -87,6 +88,7 @@ def remote_serializer_factory(table_schema: DatasetTableSchema):
         "Meta",
         (),
         {
+            "model": model,
             "fields": list(declared_fields.keys()),
             "many_results_field": table_schema.id.title(),
         },
