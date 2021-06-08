@@ -30,6 +30,7 @@ from rest_framework.exceptions import ParseError, ValidationError
 from rest_framework.fields import URLField, empty
 from rest_framework.utils.serializer_helpers import ReturnDict, ReturnList
 from rest_framework_gis.fields import GeometryField
+from schematools.utils import to_snake_case
 
 from rest_framework_dso.crs import CRS
 from rest_framework_dso.embedding import (
@@ -466,8 +467,6 @@ class DSOSerializer(ExpandMixin, serializers.Serializer):
         return None
 
     def create(self, validated_data):
-        print(self.context["view"])
-
         def set_relations_recursively(model, data, current_key=None):
             if isinstance(data, dict):
                 for key, value in data.items():
@@ -496,13 +495,8 @@ class DSOSerializer(ExpandMixin, serializers.Serializer):
             return model
 
         flat_model = self.context["view"].model(
-            **{
-                k: f
-                for k, f in validated_data.items()
-                if k != "toetsInkomenTeHoog" and k != "toetsVermogenTeHoog"
-            }
+            **{to_snake_case(k): f for k, f in validated_data.items()}
         )
-        print("hi")
         # flat_model = set_relations_recursively(flat_model, validated_data)
         # print(vars(flat_model))
         # print(dir(flat_model))
@@ -513,7 +507,6 @@ class DSOSerializer(ExpandMixin, serializers.Serializer):
     def update(self, instance, validated_data):
         print(instance)
         for k, f in validated_data.items():
-            print(f)
             setattr(instance, k, f)
         # instance.save()
         return instance

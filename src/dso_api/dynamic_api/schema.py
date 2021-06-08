@@ -77,16 +77,11 @@ def resolve_remote(
     view.kwargs = {"pk": kwargs["bsn"]}
     data = view.client.call(info.context, path=f"{kwargs['bsn']}")
 
-    del data["toetsInkomenTeHoog"]
-    del data["toetsVermogenTeHoog"]
     del data["bankrekeningen"]
     del data["inkomenBronnen"]
 
-    print(data)
-
     serializer = view.get_serializer(data=data, context={"request": request}, many=False)
     print(serializer)
-    print("hihi")
     # Class SuwiVerzoekenSerializer missing \"Meta.model\" attribute
     try:
         serializer.is_valid()
@@ -94,9 +89,7 @@ def resolve_remote(
         print(e)
         pass
 
-    print("hi")
     serializer.save()
-    print("bye")
     # view.kwargs = {"pk": variables["bsn"]}
     return serializer.save()
 
@@ -194,9 +187,6 @@ def create_schema(viewsets: List[ViewSet]) -> graphene.Schema:
                 (DjangoObjectType,),
                 {
                     "Meta": meta,
-                    "resolve_toets_inkomen_te_hoog": lambda root, info: print("hiha"),
-                    "resolve_bsn": lambda root, info: print("hiha"),
-                    "resolve_inkomenBronnen": lambda root, info: print("hiha"),
                 },
             )
 
