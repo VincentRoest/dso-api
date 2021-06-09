@@ -77,9 +77,6 @@ def resolve_remote(
     view.kwargs = {"pk": kwargs["bsn"]}
     data = view.client.call(info.context, path=f"{kwargs['bsn']}")
 
-    del data["bankrekeningen"]
-    del data["inkomenBronnen"]
-
     serializer = view.get_serializer(data=data, context={"request": request}, many=False)
     print(serializer)
     # Class SuwiVerzoekenSerializer missing \"Meta.model\" attribute
@@ -163,6 +160,7 @@ def create_schema(viewsets: List[ViewSet]) -> graphene.Schema:
 
             model = getattr(viewset, "model")
             field_names = viewset.serializer_class.Meta.fields
+
             meta = type(
                 "Meta",
                 (object,),
@@ -171,11 +169,7 @@ def create_schema(viewsets: List[ViewSet]) -> graphene.Schema:
                     "fields": "__all__",
                     "serializer_class": viewset.serializer_class,
                     # add actual filterable fields here.
-                    "filter_fields": {"bsn": ["exact"]},
-                    "extra": {
-                        # "dataset_id": model.get_dataset_id(),
-                        # "table_id": model.get_table_id(),
-                    },
+                    "filterset_class": viewset.filterset_class,
                     "interfaces": (CustomNode,),
                 },
             )
