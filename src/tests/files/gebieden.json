@@ -5,17 +5,17 @@
   "status": "beschikbaar",
   "version": "0.0.1",
   "identifier": "identificatie",
-  "temporal": {
-    "identifier": "volgnummer",
-    "dimensions": {
-      "geldigOp": ["beginGeldigheid", "eindGeldigheid"]
-    }
-  },
   "crs": "EPSG:28992",
   "tables": [
     {
       "id": "buurten",
       "type": "table",
+      "temporal": {
+        "identifier": "volgnummer",
+        "dimensions": {
+          "geldigOp": ["beginGeldigheid", "eindGeldigheid"]
+        }
+      },
       "schema": {
         "$id": "https://github.com/Amsterdam/schemas/gebieden/buurten.json",
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -78,6 +78,12 @@
     {
       "id": "wijken",
       "type": "table",
+      "temporal": {
+        "identifier": "volgnummer",
+        "dimensions": {
+          "geldigOp": ["beginGeldigheid", "eindGeldigheid"]
+        }
+      },
       "schema": {
         "$id": "https://github.com/Amsterdam/schemas/gebieden/wijken.json",
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -143,6 +149,12 @@
     {
       "id": "ggwgebieden",
       "type": "table",
+      "temporal": {
+        "identifier": "volgnummer",
+        "dimensions": {
+          "geldigOp": ["beginGeldigheid", "eindGeldigheid"]
+        }
+      },
       "schema": {
         "$id": "https://github.com/Amsterdam/schemas/gebieden/ggwgebieden.json",
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -207,8 +219,97 @@
       }
     },
     {
+      "id": "ggpgebieden",
+      "type": "table",
+      "temporal": {
+        "identifier": "volgnummer",
+        "dimensions": {
+          "geldigOp": ["beginGeldigheid", "eindGeldigheid"]
+        }
+      },
+      "schema": {
+        "$id": "https://github.com/Amsterdam/schemas/gebieden/ggpgebieden.json",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "mainGeometry": "geometrie",
+        "identifier": ["identificatie", "volgnummer"],
+        "required": ["schema", "identificatie", "volgnummer"],
+        "display": "id",
+        "properties": {
+          "schema": {
+            "$ref": "https://schemas.data.amsterdam.nl/schema@v1.1.1#/definitions/schema"
+          },
+          "identificatie": {
+            "type": "string",
+            "description": "Unieke identificatie van het object."
+          },
+          "volgnummer": {
+            "type": "integer",
+            "description": "Uniek volgnummer van de toestand van het object."
+          },
+          "registratiedatum": {
+            "type": "string",
+            "format": "date-time",
+            "description": "De datum waarop de toestand is geregistreerd."
+          },
+          "naam": {
+            "type": "string",
+            "description": "De naam van het object."
+          },
+          "beginGeldigheid": {
+            "type": "string",
+            "format": "date",
+            "description": "De datum waarop het object is gecreëerd."
+          },
+          "eindGeldigheid": {
+            "type": "string",
+            "format": "date",
+            "description": "De datum waarop het object is komen te vervallen."
+          },
+          "bestaatUitBuurten": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "identificatie": {
+                  "type": "string"
+                },
+                "volgnummer": {
+                  "type": "integer"
+                },
+                "beginGeldigheid": {
+                  "type": "string",
+                  "format": "date",
+                  "description": "De datum waarop het object is gecreëerd."
+                },
+                "eindGeldigheid": {
+                  "type": "string",
+                  "format": "date",
+                  "description": "De datum waarop het object is komen te vervallen."
+                }
+              }
+            },
+            "relation": "gebieden:buurten",
+            "description": "De buurten waaruit het object bestaat."
+          },
+          "geometrie": {
+            "$ref": "https://geojson.org/schema/Polygon.json",
+            "description": "Geometrische beschrijving van een object."
+          }
+        }
+      }
+    },
+
+    {
       "id": "stadsdelen",
       "type": "table",
+      "temporal": {
+        "identifier": "volgnummer",
+        "dimensions": {
+          "geldigOp": ["beginGeldigheid", "eindGeldigheid"]
+        }
+      },
       "schema": {
         "$id": "https://github.com/Amsterdam/schemas/gebieden/stadsdelen.json",
         "$schema": "http://json-schema.org/draft-07/schema#",

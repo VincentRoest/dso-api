@@ -8,7 +8,6 @@ from typing import Type, cast
 
 import pytest
 from authorization_django import jwks
-from django.contrib.auth.models import AnonymousUser
 from django.contrib.gis.geos import GEOSGeometry, Point
 from django.core.handlers.wsgi import WSGIRequest
 from django.db import connection
@@ -17,13 +16,12 @@ from django.utils.timezone import get_current_timezone
 from jwcrypto.jwt import JWT
 from rest_framework.request import Request
 from rest_framework.test import APIClient, APIRequestFactory
-from schematools.contrib.django.auth_backend import RequestProfile
 from schematools.contrib.django.models import Dataset, DynamicModel, Profile
 from schematools.types import DatasetSchema, ProfileSchema
 
 from rest_framework_dso.crs import RD_NEW
-from rest_framework_dso.renderers import HALJSONRenderer
 from tests.test_rest_framework_dso.models import Actor, Category, Location, Movie, MovieUser
+from tests.utils import api_request_with_scopes, to_drf_request
 
 HERE = Path(__file__).parent
 
@@ -35,21 +33,11 @@ def api_rf() -> APIRequestFactory:
 
 
 @pytest.fixture()
-def api_request(api_rf) -> WSGIRequest:
+def api_request() -> WSGIRequest:
     """Return a very basic Request object. This can be used for the APIClient.
     The DRF views use a different request object internally, see `drf_request` for that.
     """
-    request = api_rf.get("/v1/dummy/")
-    request.accept_crs = None  # for DSOSerializer, expects to be used with DSOViewMixin
-    request.response_content_crs = None
-
-    request.user = AnonymousUser()
-    request.auth_profile = RequestProfile(request)
-    request.is_authorized_for = lambda *scopes: True
-
-    # Temporal modifications. Usually done via TemporalDatasetMiddleware
-    request.versioned = False
-    return request
+    return api_request_with_scopes([])
 
 
 @pytest.fixture()
@@ -57,9 +45,7 @@ def drf_request(api_request) -> Request:
     """The wrapped WSGI Request as a Django-Rest-Framework request.
     This is the 'request' object that APIView.dispatch() creates.
     """
-    request = Request(api_request)
-    request.accepted_renderer = HALJSONRenderer()
-    return request
+    return to_drf_request(api_request)
 
 
 @pytest.fixture()
@@ -241,7 +227,18 @@ def afval_schema_backwards_summary(
 
 @pytest.fixture()
 def afval_dataset(afval_schema_json) -> Dataset:
-    return Dataset.objects.create(name="afvalwegingen", schema_data=afval_schema_json)
+    return Dataset.objects.create(
+        name="afvalwegingen", path="afvalwegingen", schema_data=json.dumps(afval_schema_json)
+    )
+
+
+@pytest.fixture()
+def afval_dataset_subpath(afval_schema_json) -> Dataset:
+    return Dataset.objects.create(
+        name="afvalwegingen",
+        path="sub/path/afvalwegingen",
+        schema_data=json.dumps(afval_schema_json),
+    )
 
 
 @pytest.fixture()
@@ -342,10 +339,22 @@ def brp_dataset(brp_schema_json, brp_endpoint_url) -> Dataset:
     """Create a remote dataset."""
     return Dataset.objects.create(
         name="brp",
-        schema_data=brp_schema_json,
+        schema_data=json.dumps(brp_schema_json),
         enable_db=False,
         endpoint_url=brp_endpoint_url,
-        url_prefix="remote",
+        path="remote/brp",
+    )
+
+
+@pytest.fixture()
+def hcbrk_dataset() -> Dataset:
+    return Dataset.objects.create(
+        name="hcbrk",
+        schema_data=(HERE / "files" / "hcbrk.json").read_text(),
+        enable_db=False,
+        # URL netloc needs ".acceptatie." because of HTTP pool selection.
+        endpoint_url="http://fake.acceptatie.kadaster/esd/bevragen/v1/{table_id}",
+        path="remote/hcbrk",
     )
 
 
@@ -455,7 +464,11 @@ def parkeervakken_schema(parkeervakken_schema_json) -> DatasetSchema:
 
 @pytest.fixture()
 def parkeervakken_dataset(parkeervakken_schema_json) -> Dataset:
-    return Dataset.objects.create(name="parkeervakken", schema_data=parkeervakken_schema_json)
+    return Dataset.objects.create(
+        name="parkeervakken",
+        path="parkeervakken",
+        schema_data=json.dumps(parkeervakken_schema_json),
+    )
 
 
 @pytest.fixture()
@@ -526,7 +539,9 @@ def vestiging2(vestiging_vestiging_model, bezoek_adres2, post_adres1):
 
 @pytest.fixture()
 def vestiging_dataset(vestiging_schema_json) -> Dataset:
-    return Dataset.objects.create(name="vestiging", schema_data=vestiging_schema_json)
+    return Dataset.objects.create(
+        name="vestiging", path="vestiging", schema_data=json.dumps(vestiging_schema_json)
+    )
 
 
 @pytest.fixture()
@@ -586,7 +601,20 @@ def fietspaaltjes_schema_json() -> dict:
 
 @pytest.fixture()
 def fietspaaltjes_dataset(fietspaaltjes_schema_json) -> Dataset:
-    return Dataset.objects.create(name="fietspaaltjes", schema_data=fietspaaltjes_schema_json)
+    return Dataset.objects.create(
+        name="fietspaaltjes",
+        path="fietspaaltjes",
+        schema_data=json.dumps(fietspaaltjes_schema_json),
+    )
+
+
+@pytest.fixture()
+def fietspaaltjes_dataset_subpath(fietspaaltjes_schema_json) -> Dataset:
+    return Dataset.objects.create(
+        name="fietspaaltjes",
+        path="sub/fietspaaltjes",
+        schema_data=json.dumps(fietspaaltjes_schema_json),
+    )
 
 
 @pytest.fixture()
@@ -636,7 +664,9 @@ def fietspaaltjes_schema_json_no_display() -> dict:
 @pytest.fixture()
 def fietspaaltjes_dataset_no_display(fietspaaltjes_schema_json_no_display) -> Dataset:
     return Dataset.objects.create(
-        name="fietspaaltjesnodisplay", schema_data=fietspaaltjes_schema_json_no_display
+        name="fietspaaltjesnodisplay",
+        path="fietspaaltjesnodisplay",
+        schema_data=json.dumps(fietspaaltjes_schema_json_no_display),
     )
 
 
@@ -686,7 +716,9 @@ def explosieven_schema(
 
 @pytest.fixture()
 def explosieven_dataset(explosieven_schema_json) -> Dataset:
-    return Dataset.objects.create(name="explosieven", schema_data=explosieven_schema_json)
+    return Dataset.objects.create(
+        name="explosieven", path="explosieven", schema_data=json.dumps(explosieven_schema_json)
+    )
 
 
 @pytest.fixture()
@@ -717,7 +749,9 @@ def indirect_self_ref_schema(indirect_self_ref_schema_json) -> DatasetSchema:
 @pytest.fixture()
 def indirect_self_ref_dataset(indirect_self_ref_schema_json) -> Dataset:
     return Dataset.objects.create(
-        name="indirect_self_ref", schema_data=indirect_self_ref_schema_json
+        name="indirect_self_ref",
+        path="indirect_self_ref",
+        schema_data=json.dumps(indirect_self_ref_schema_json),
     )
 
 
@@ -742,7 +776,9 @@ def download_url_schema(download_url_schema_json) -> DatasetSchema:
 
 @pytest.fixture()
 def download_url_dataset(download_url_schema_json) -> Dataset:
-    return Dataset.objects.create(name="download", schema_data=download_url_schema_json)
+    return Dataset.objects.create(
+        name="download", path="download", schema_data=json.dumps(download_url_schema_json)
+    )
 
 
 @pytest.fixture()
@@ -762,7 +798,9 @@ def meldingen_dataset(
     gebieden_dataset,  # dependency in schema
     meldingen_schema_json,
 ) -> Dataset:
-    return Dataset.objects.create(name="meldingen", schema_data=meldingen_schema_json)
+    return Dataset.objects.create(
+        name="meldingen", path="meldingen", schema_data=json.dumps(meldingen_schema_json)
+    )
 
 
 @pytest.fixture()
@@ -788,7 +826,9 @@ def gebieden_schema(gebieden_schema_json) -> DatasetSchema:
 @pytest.fixture()
 def _gebieden_dataset(gebieden_schema_json) -> Dataset:
     """Internal"""
-    return Dataset.objects.create(name="gebieden", schema_data=gebieden_schema_json)
+    return Dataset.objects.create(
+        name="gebieden", path="gebieden", schema_data=json.dumps(gebieden_schema_json)
+    )
 
 
 @pytest.fixture()
@@ -814,7 +854,7 @@ def bag_schema(bag_schema_json) -> DatasetSchema:
 
 @pytest.fixture()
 def bag_dataset(bag_schema_json) -> Dataset:
-    return Dataset.objects.create(name="bag", schema_data=bag_schema_json)
+    return Dataset.objects.create(name="bag", path="bag", schema_data=json.dumps(bag_schema_json))
 
 
 @pytest.fixture()
@@ -834,7 +874,9 @@ def woningbouwplannen_dataset(woningbouwplannen_schema_json, _gebieden_dataset) 
     # Woningbouwplannen has a dependency on gebieden,
     # so this fixture makes sure it's always loaded.
     return Dataset.objects.create(
-        name="woningbouwplannen", schema_data=woningbouwplannen_schema_json
+        name="woningbouwplannen",
+        path="woningbouwplannen",
+        schema_data=json.dumps(woningbouwplannen_schema_json),
     )
 
 
@@ -866,6 +908,11 @@ def wijken_model(gebieden_dataset, dynamic_models):
 @pytest.fixture()
 def ggwgebieden_model(gebieden_dataset, dynamic_models):
     return dynamic_models["gebieden"]["ggwgebieden"]
+
+
+@pytest.fixture()
+def ggpgebieden_model(gebieden_dataset, dynamic_models):
+    return dynamic_models["gebieden"]["ggpgebieden"]
 
 
 @pytest.fixture()
@@ -919,7 +966,25 @@ def ggwgebieden_data(ggwgebieden_model, buurten_data):
         id="03630950000000.1", identificatie="03630950000000", volgnummer=1
     )
     ggwgebieden_model.bestaat_uit_buurten.through.objects.create(
-        ggwgebieden_id="03630950000000.1", bestaat_uit_buurten_id="03630000000078.1"
+        ggwgebieden_id="03630950000000.1",
+        bestaat_uit_buurten_id="03630000000078.1",
+        bestaat_uit_buurten_identificatie="03630000000078",
+        bestaat_uit_buurten_volgnummer=1,
+    )
+
+
+@pytest.fixture()
+def ggpgebieden_data(ggpgebieden_model, buurten_data):
+    ggpgebieden_model.objects.create(
+        id="03630950000000.1", identificatie="03630950000000", volgnummer=1
+    )
+    ggpgebieden_model.bestaat_uit_buurten.through.objects.create(
+        ggpgebieden_id="03630950000000.1",
+        bestaat_uit_buurten_id="03630000000078.1",
+        bestaat_uit_buurten_identificatie="03630000000078",
+        bestaat_uit_buurten_volgnummer=1,
+        begin_geldigheid="2020-01-04",
+        eind_geldigheid=None,
     )
 
 

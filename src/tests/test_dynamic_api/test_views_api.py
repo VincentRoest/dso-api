@@ -1,21 +1,27 @@
 import inspect
 import json
 import math
-from unittest import mock
 
 import orjson
 import pytest
+from django.apps import apps
 from django.contrib.gis.geos import Point
 from django.db import connection
 from django.urls import NoReverseMatch, reverse
 from rest_framework.response import Response
 from schematools.contrib.django import models
 from schematools.contrib.django.db import create_tables
+from schematools.types import ProfileSchema
 
-from dso_api.dynamic_api.permissions import fetch_scopes_for_dataset_table, fetch_scopes_for_model
 from rest_framework_dso.crs import CRS, RD_NEW
 from rest_framework_dso.response import StreamingResponse
-from tests.utils import read_response, read_response_json
+from tests.utils import (
+    patch_dataset_auth,
+    patch_field_auth,
+    patch_table_auth,
+    read_response,
+    read_response_json,
+)
 
 
 class AproxFloat(float):
@@ -29,13 +35,6 @@ class AproxFloat(float):
 GEOJSON_POINT = [
     AproxFloat(c) for c in Point(10, 10, srid=RD_NEW.srid).transform("EPSG:4326", clone=True)
 ]
-
-
-@pytest.fixture(autouse=True)
-def clear_caches():
-    yield  # run tests first
-    fetch_scopes_for_dataset_table.cache_clear()
-    fetch_scopes_for_model.cache_clear()
 
 
 @pytest.mark.django_db
@@ -66,8 +65,6 @@ def test_list_dynamic_view_reload(api_client, api_rf, router, bommen_dataset):
     assert data == {
         "_links": {
             "self": {"href": "http://testserver/v1/bommen/bommen/"},
-            "next": {"href": None},
-            "previous": {"href": None},
         },
         "_embedded": {"bommen": []},
         "page": {"number": 1, "size": 20, "totalElements": 0, "totalPages": 1},
@@ -159,150 +156,149 @@ class TestAuth:
     """ Test authorization """
 
     def test_mandatory_filters(
-        self, api_client, fetch_auth_token, parkeervakken_parkeervak_model, filled_router
+        self,
+        api_client,
+        fetch_auth_token,
+        parkeervakken_schema,
+        parkeervakken_parkeervak_model,
+        filled_router,
     ):
         """
         Tests that profile permissions with are activated
         through querying with the right mandatoryFilterSets
         """
-        # need to reload router, regimes is a nested table
-        # and router will not know of it's existence
-        models.Profile.objects.create(
-            name="parkeerwacht",
-            scopes=["PROFIEL/SCOPE"],
-            schema_data={
-                "datasets": {
-                    "parkeervakken": {
-                        "tables": {
-                            "parkeervakken": {
-                                "mandatoryFilterSets": [
-                                    ["buurtcode", "type"],
-                                    ["regimes.inWerkingOp"],
-                                ]
+        patch_table_auth(parkeervakken_schema, "parkeervakken", auth=["DATASET/SCOPE"])
+        models.Profile.create_for_schema(
+            ProfileSchema.from_dict(
+                {
+                    "name": "parkeerwacht",
+                    "scopes": ["PROFIEL/SCOPE"],
+                    "datasets": {
+                        "parkeervakken": {
+                            "tables": {
+                                "parkeervakken": {
+                                    "permissions": "read",
+                                    "mandatoryFilterSets": [
+                                        ["buurtcode", "type"],
+                                        ["regimes.inWerkingOp"],
+                                    ],
+                                }
                             }
                         }
-                    }
+                    },
                 }
-            },
+            )
         )
-        models.Profile.objects.create(
-            name="parkeerwacht",
-            scopes=["PROFIEL2/SCOPE"],
-            schema_data={
-                "datasets": {
-                    "parkeervakken": {
-                        "tables": {
-                            "parkeervakken": {"mandatoryFilterSets": [["regimes.aantal[gte]"]]}
+        models.Profile.create_for_schema(
+            ProfileSchema.from_dict(
+                {
+                    "name": "parkeerwacht",
+                    "scopes": ["PROFIEL2/SCOPE"],
+                    "datasets": {
+                        "parkeervakken": {
+                            "tables": {
+                                "parkeervakken": {
+                                    "permissions": "read",
+                                    "mandatoryFilterSets": [
+                                        ["regimes.aantal[gte]"],
+                                    ],
+                                }
+                            }
                         }
-                    }
+                    },
                 }
-            },
+            )
         )
 
-        models.DatasetTable.objects.filter(name="parkeervakken").update(auth="DATASET/SCOPE")
+        def _get(token, params=""):
+            return api_client.get(f"{base_url}{params}", HTTP_AUTHORIZATION=f"Bearer {token}")
+
         token = fetch_auth_token(["PROFIEL/SCOPE"])
         base_url = reverse("dynamic_api:parkeervakken-parkeervakken-list")
         assert api_client.get(base_url).status_code == 403
-        assert api_client.get(base_url, HTTP_AUTHORIZATION=f"Bearer {token}").status_code == 403
-        assert (
-            api_client.get(
-                f"{base_url}?buurtcode=A05d", HTTP_AUTHORIZATION=f"Bearer {token}"
-            ).status_code
-            == 403
-        )
-        assert (
-            api_client.get(
-                f"{base_url}?buurtcode=A05d&type=E9",
-                HTTP_AUTHORIZATION=f"Bearer {token}",
-            ).status_code
-            == 200
-        )
-        assert (
-            api_client.get(
-                f"{base_url}?regimes.inWerkingOp=20:05",
-                HTTP_AUTHORIZATION=f"Bearer {token}",
-            ).status_code
-            == 200
-        )
-        assert (
-            api_client.get(
-                f"{base_url}?regimes.inWerkingOp=", HTTP_AUTHORIZATION=f"Bearer {token}"
-            ).status_code
-            == 403
-        )
-        assert (
-            api_client.get(
-                f"{base_url}?regimes.inWerkingOp", HTTP_AUTHORIZATION=f"Bearer {token}"
-            ).status_code
-            == 403
-        )
+        assert _get(token).status_code == 403
 
-        token = fetch_auth_token(["DATASET/SCOPE", "PROFIEL/SCOPE"])
-        assert api_client.get(base_url, HTTP_AUTHORIZATION=f"Bearer {token}").status_code == 200
-        token = fetch_auth_token(["DATASET/SCOPE"])
-        assert api_client.get(base_url, HTTP_AUTHORIZATION=f"Bearer {token}").status_code == 200
-        token = fetch_auth_token(["PROFIEL/SCOPE", "PROFIEL2/SCOPE"])
-        assert (
-            api_client.get(
-                f"{base_url}?regimes.inWerkingOp=20:05",
-                HTTP_AUTHORIZATION=f"Bearer {token}",
-            ).status_code
-            == 200
-        )
-        assert (
-            api_client.get(
-                f"{base_url}?regimes.aantal[gte]=2",
-                HTTP_AUTHORIZATION=f"Bearer {token}",
-            ).status_code
-            == 200
-        )
+        # See that only the proper filters activate the profile (via mandatoryFilterSets)
+        assert _get(token, "?buurtcode=A05d").status_code == 403
+        assert _get(token, "?buurtcode=A05d&type=E9").status_code == 200
+        assert _get(token, "?regimes.inWerkingOp=20:05").status_code == 200
+        assert _get(token, "?regimes.inWerkingOp=").status_code == 403
+        assert _get(token, "?regimes.inWerkingOp").status_code == 403
+
+        # See that 'auth' satisfies without needing a profile
+        token2 = fetch_auth_token(["DATASET/SCOPE", "PROFIEL/SCOPE"])
+        assert _get(token2).status_code == 200
+
+        token3 = fetch_auth_token(["DATASET/SCOPE"])
+        assert _get(token3).status_code == 200
+
+        # See that both profiles can be active
+        token4 = fetch_auth_token(["PROFIEL/SCOPE", "PROFIEL2/SCOPE"])
+        assert _get(token4, "?regimes.inWerkingOp=20:05").status_code == 200
+        assert _get(token4, "?regimes.aantal[gte]=2").status_code == 200
 
     def test_profile_field_permissions(
-        self, api_client, fetch_auth_token, parkeervakken_parkeervak_model, filled_router
+        self,
+        api_client,
+        fetch_auth_token,
+        parkeervakken_schema,
+        parkeervakken_parkeervak_model,
+        filled_router,
     ):
         """
         Tests combination of profiles with auth scopes on dataset level.
         Profiles should be activated only when one of it's mandatoryFilterSet
         is queried. And field permissions should be inherited from dataset scope first.
         """
-        models.Profile.objects.create(
-            name="parkeerwacht",
-            scopes=["PROFIEL/SCOPE"],
-            schema_data={
-                "datasets": {
-                    "parkeervakken": {
-                        "tables": {
-                            "parkeervakken": {
-                                "mandatoryFilterSets": [
-                                    ["id"],
-                                ],
-                                "fields": {"type": "read", "soort": "letters:1"},
+        # Patch the whole dataset so related tables are also restricted
+        patch_dataset_auth(parkeervakken_schema, auth=["DATASET/SCOPE"])
+        models.Profile.create_for_schema(
+            ProfileSchema.from_dict(
+                {
+                    "name": "parkeerwacht",
+                    "scopes": ["PROFIEL/SCOPE"],
+                    "datasets": {
+                        "parkeervakken": {
+                            "tables": {
+                                "parkeervakken": {
+                                    "mandatoryFilterSets": [
+                                        ["id"],
+                                    ],
+                                    "fields": {
+                                        "type": "read",
+                                        "soort": "letters:1",
+                                    },
+                                }
                             }
                         }
-                    }
+                    },
                 }
-            },
+            )
         )
-        models.Profile.objects.create(
-            name="parkeerwacht2",
-            scopes=["PROFIEL2/SCOPE"],
-            schema_data={
-                "datasets": {
-                    "parkeervakken": {
-                        "tables": {
-                            "parkeervakken": {
-                                "mandatoryFilterSets": [
-                                    ["id", "type"],
-                                ],
-                                "fields": {"type": "letters:1", "soort": "read"},
+        models.Profile.create_for_schema(
+            ProfileSchema.from_dict(
+                {
+                    "name": "parkeerwacht2",
+                    "scopes": ["PROFIEL2/SCOPE"],
+                    "datasets": {
+                        "parkeervakken": {
+                            "tables": {
+                                "parkeervakken": {
+                                    "mandatoryFilterSets": [
+                                        ["id", "type"],
+                                    ],
+                                    "fields": {
+                                        "type": "letters:1",
+                                        "soort": "read",
+                                    },
+                                }
                             }
                         }
-                    }
+                    },
                 }
-            },
+            )
         )
-        models.Dataset.objects.filter(name="parkeervakken").update(auth="DATASET/SCOPE")
-        parkeervak = parkeervakken_parkeervak_model.objects.create(
+        parkeervakken_parkeervak_model.objects.create(
             id=1,
             type="Langs",
             soort="NIET FISCA",
@@ -314,109 +310,152 @@ class TestAuth:
         base_url = reverse("dynamic_api:parkeervakken-parkeervakken-list")
         response = api_client.get(f"{base_url}?id=1", HTTP_AUTHORIZATION=f"Bearer {token}")
         data = read_response_json(response)
+        assert response.status_code == 200, data
         parkeervak_data = data["_embedded"]["parkeervakken"][0]
+        assert parkeervak_data == {
+            "_links": {
+                "schema": (
+                    "https://schemas.data.amsterdam.nl"
+                    "/datasets/parkeervakken/dataset#parkeervakken"
+                ),
+                "self": {"href": "http://testserver/v1/parkeervakken/parkeervakken/1/"},
+            },
+            # no ID field.
+            "soort": "N",  # letters:1
+            "type": "Langs",  # read permission
+        }
 
-        # assert that a single profile is activated
-        assert parkeervak_data["type"] == parkeervak.type
-        assert parkeervak_data["soort"] == parkeervak.soort[:1]
-        # assert that there is no table scope
-        assert "id" not in parkeervak_data.keys()
-
-        # 2) profile and dataset scope
+        # 2) profile and dataset scope -> all allowed (auth of dataset is satisfied)
         token = fetch_auth_token(["PROFIEL/SCOPE", "DATASET/SCOPE"])
         response = api_client.get(f"{base_url}?id=1", HTTP_AUTHORIZATION=f"Bearer {token}")
         data = read_response_json(response)
+        assert response.status_code == 200, data
         parkeervak_data = data["_embedded"]["parkeervakken"][0]
-        # assert that dataset scope permissions overrules lower profile permission
-        assert parkeervak_data["soort"] == parkeervak.soort
-        assert "id" in parkeervak_data.keys()
+        assert parkeervak_data == {
+            "_links": {
+                "schema": (
+                    "https://schemas.data.amsterdam.nl"
+                    "/datasets/parkeervakken/dataset#parkeervakken"
+                ),
+                "self": {"href": "http://testserver/v1/parkeervakken/parkeervakken/1/"},
+            },
+            # Full data!
+            "id": "1",
+            "type": "Langs",
+            "soort": "NIET FISCA",
+            "aantal": 1.0,
+            "eType": None,
+            "geometry": None,
+            "buurtcode": None,
+            "straatnaam": None,
+            "regimes": [],
+        }
 
-        # 3) two profile scopes
+        # 3) two profile scopes, only one matches (mandatory filtersets)
         token = fetch_auth_token(["PROFIEL/SCOPE", "PROFIEL2/SCOPE"])
         # trigger one profile
         response = api_client.get(f"{base_url}?id=1", HTTP_AUTHORIZATION=f"Bearer {token}")
         data = read_response_json(response)
-
         parkeervak_data = data["_embedded"]["parkeervakken"][0]
-        # assert that only the profile is used that passed it's mandatory filterset restrictions
-        assert parkeervak_data["soort"] == parkeervak.soort[:1]
-        # trigger both profiles
+        assert parkeervak_data == {
+            "_links": {
+                "schema": (
+                    "https://schemas.data.amsterdam.nl"
+                    "/datasets/parkeervakken/dataset#parkeervakken"
+                ),
+                "self": {"href": "http://testserver/v1/parkeervakken/parkeervakken/1/"},
+            },
+            "soort": "N",  # letters:1
+            "type": "Langs",  # read permission
+        }
+
+        # 4) both profiles + mandatory filtersets
         response = api_client.get(
             f"{base_url}?id=1&type=Langs", HTTP_AUTHORIZATION=f"Bearer {token}"
         )
         data = read_response_json(response)
-
+        assert response.status_code == 200, data
         parkeervak_data = data["_embedded"]["parkeervakken"][0]
-        # assert that both profiles are triggered and the highest permission reigns
-        assert parkeervak_data["type"] == parkeervak.type
-        assert parkeervak_data["soort"] == parkeervak.soort
+        assert parkeervak_data == {
+            "_links": {
+                "schema": (
+                    "https://schemas.data.amsterdam.nl"
+                    "/datasets/parkeervakken/dataset#parkeervakken"
+                ),
+                "self": {"href": "http://testserver/v1/parkeervakken/parkeervakken/1/"},
+            },
+            "type": "Langs",  # read permission
+            "soort": "NIET FISCA",  # read permission
+        }
 
     def test_auth_on_dataset_schema_protects_containers(
-        self, api_client, afval_dataset, filled_router
+        self, api_client, afval_schema, afval_dataset, filled_router
     ):
         """Prove that auth protection at dataset level leads to a 403 on the container listview."""
+        patch_dataset_auth(afval_schema, auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-list")
-        models.Dataset.objects.filter(name="afvalwegingen").update(auth="BAG/R")
         response = api_client.get(url)
         assert response.status_code == 403, response.data
 
     def test_auth_on_dataset_schema_protects_cluster(
-        self, api_client, afval_dataset, filled_router
+        self, api_client, afval_schema, afval_dataset, filled_router
     ):
         """Prove that auth protection at dataset level leads to a 403 on the cluster listview."""
+        patch_dataset_auth(afval_schema, auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-clusters-list")
-        models.Dataset.objects.filter(name="afvalwegingen").update(auth="BAG/R")
         response = api_client.get(url)
         assert response.status_code == 403, response.data
 
-    def test_auth_on_table_schema_protects(self, api_client, afval_dataset, filled_router):
+    def test_auth_on_table_schema_protects(
+        self, api_client, afval_schema, afval_dataset, filled_router
+    ):
         """Prove that auth protection at table level (container)
         leads to a 403 on the container listview."""
+        patch_table_auth(afval_schema, "containers", auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-list")
-        models.DatasetTable.objects.filter(name="containers").update(auth="BAG/R")
         response = api_client.get(url)
         assert response.status_code == 403, response.data
 
     def test_auth_on_table_schema_does_not_protect_sibling_tables(
-        self, api_client, fetch_auth_token, afval_dataset, filled_router
+        self, api_client, fetch_auth_token, afval_schema, afval_dataset, filled_router
     ):
         """Prove that auth protection at table level (cluster)
         does not protect the container list view."""
+        patch_table_auth(afval_schema, "clusters", auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-list")
-        models.DatasetTable.objects.filter(name="clusters").update(auth="BAG/R")
         response = api_client.get(url)
         assert response.status_code == 200, response.data
 
     def test_auth_on_table_schema_with_token_for_valid_scope(
-        self, api_client, fetch_auth_token, afval_container, filled_router
+        self, api_client, fetch_auth_token, afval_schema, afval_container, filled_router
     ):
         """Prove that auth protected table (container) can be
         viewed with a token with the correct scope."""
+        patch_table_auth(afval_schema, "containers", auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-list")
-        models.DatasetTable.objects.filter(name="containers").update(auth="BAG/R")
         token = fetch_auth_token(["BAG/R"])
         response = api_client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
         assert response.status_code == 200, response.data
 
     def test_auth_on_table_schema_with_token_for_invalid_scope(
-        self, api_client, fetch_auth_token, afval_dataset, filled_router
+        self, api_client, fetch_auth_token, afval_schema, afval_dataset, filled_router
     ):
         """Prove that auth protected table (container) cannot be
         viewed with a token with an incorrect scope.
         """
+        patch_table_auth(afval_schema, "containers", auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-list")
-        models.DatasetTable.objects.filter(name="containers").update(auth="BAG/R")
         token = fetch_auth_token(["BAG/RSN"])
         response = api_client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
         assert response.status_code == 403, response.data
 
     def test_auth_on_embedded_fields_with_token_for_valid_scope(
-        self, api_client, fetch_auth_token, afval_container, filled_router
+        self, api_client, fetch_auth_token, afval_schema, afval_container, filled_router
     ):
         """Prove that expanded fields are shown when a reference field is protected
         with an auth scope and there is a valid token"""
+        patch_table_auth(afval_schema, "clusters", auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-list")
-        models.DatasetTable.objects.filter(name="clusters").update(auth="BAG/R")
         token = fetch_auth_token(["BAG/R"])
         response = api_client.get(
             url, data={"_expand": "true"}, HTTP_AUTHORIZATION=f"Bearer {token}"
@@ -426,99 +465,104 @@ class TestAuth:
         assert "cluster" in data["_embedded"], data
 
     def test_auth_on_embedded_fields_without_token_for_valid_scope(
-        self, api_client, fetch_auth_token, afval_container, filled_router
+        self, api_client, fetch_auth_token, afval_schema, afval_container, filled_router
     ):
         """Prove that expanded fields are *not* shown when a reference field is protected
         with an auth scope. For expand=true, we return a result,
         without the fields that are protected"""
+        patch_table_auth(afval_schema, "clusters", auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-list")
-        models.DatasetTable.objects.filter(name="clusters").update(auth="BAG/R")
         response = api_client.get(url, data={"_expand": "true"})
         data = read_response_json(response)
         assert response.status_code == 200, data
         assert "cluster" not in data["_embedded"], data
 
     def test_auth_on_specified_embedded_fields_without_token_for_valid_scope(
-        self, api_client, fetch_auth_token, afval_container, filled_router
+        self, api_client, fetch_auth_token, afval_schema, afval_container, filled_router
     ):
         """Prove that a 403 is returned when asked for a specific expanded field that is protected
         and there is no authorization in the token for that field.
         """
+        patch_table_auth(afval_schema, "clusters", auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-list")
-        models.DatasetTable.objects.filter(name="clusters").update(auth="BAG/R")
         response = api_client.get(url, data={"_expandScope": "cluster"})
         assert response.status_code == 403, response.data
 
     def test_auth_on_individual_fields_with_token_for_valid_scope(
-        self, api_client, fetch_auth_token, afval_container, filled_router
+        self, api_client, fetch_auth_token, afval_schema, afval_container, filled_router
     ):
         """Prove that protected fields are shown
         with an auth scope and there is a valid token"""
+        patch_field_auth(afval_schema, "containers", "eigenaar naam", auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-list")
-        models.DatasetField.objects.filter(name="eigenaar_naam").update(auth="BAG/R")
         token = fetch_auth_token(["BAG/R"])
         response = api_client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
         data = read_response_json(response)
 
         assert response.status_code == 200, data
-        assert "eigenaarNaam" in set(
-            field_name for field_name in data["_embedded"]["containers"][0].keys()
-        ), data["_embedded"]["containers"][0].keys()
+        field_names = data["_embedded"]["containers"][0].keys()
+        assert "eigenaarNaam" in field_names, field_names
 
     def test_auth_on_individual_fields_with_token_for_valid_scope_per_profile(
-        self, api_client, fetch_auth_token, afval_container, filled_router
+        self, api_client, fetch_auth_token, afval_schema, afval_container, filled_router
     ):
         """Prove that protected fields are shown
         with an auth scope connected to Profile that gives access to specific field."""
-        models.Profile.objects.create(
-            name="brk_readall",
-            scopes=["BRK/RSN"],
-            schema_data={
-                "datasets": {
-                    "afvalwegingen": {
-                        "tables": {"containers": {"fields": {"eigenaarNaam": "read"}}}
-                    }
+        patch_field_auth(afval_schema, "containers", "eigenaar naam", auth=["BAG/R"])
+        models.Profile.create_for_schema(
+            ProfileSchema.from_dict(
+                {
+                    "name": "brk_readall",
+                    "scopes": ["BRK/RSN"],
+                    "datasets": {
+                        "afvalwegingen": {
+                            "tables": {
+                                "containers": {
+                                    "fields": {
+                                        "eigenaar naam": "read",
+                                    }
+                                }
+                            }
+                        }
+                    },
                 }
-            },
+            )
         )
         url = reverse("dynamic_api:afvalwegingen-containers-list")
-        models.DatasetField.objects.filter(name="eigenaar_naam").update(auth="BAG/R")
         token = fetch_auth_token(["BRK/RO", "BRK/RSN"])
         response = api_client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
         data = read_response_json(response)
 
         assert response.status_code == 200, data
-        assert "eigenaarNaam" in set(
-            field_name for field_name in data["_embedded"]["containers"][0].keys()
-        ), data["_embedded"]["containers"][0].keys()
+        field_names = data["_embedded"]["containers"][0].keys()
+        assert "eigenaarNaam" in field_names, field_names  # profile read access
 
     def test_auth_on_individual_fields_without_token_for_valid_scope(
-        self, api_client, fetch_auth_token, afval_container, filled_router
+        self, api_client, fetch_auth_token, afval_schema, afval_container, filled_router
     ):
         """Prove that protected fields are *not* shown
         with an auth scope and there is not a valid token"""
+        patch_field_auth(afval_schema, "containers", "eigenaar naam", auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-list")
-        models.DatasetField.objects.filter(name="eigenaar_naam").update(auth="BAG/R")
         response = api_client.get(url)
         data = read_response_json(response)
 
         assert response.status_code == 200, data
-        assert "eigenaarNaam" not in set(
-            field_name for field_name in data["_embedded"]["containers"][0].keys()
-        ), data
+        field_names = data["_embedded"]["containers"][0].keys()
+        assert "eigenaarNaam" not in field_names, field_names  # profile read access
 
     def test_auth_on_field_level_is_not_cached(
         self,
         api_client,
         fetch_auth_token,
+        parkeervakken_schema,
         parkeervakken_parkeervak_model,
         parkeervakken_regime_model,
         filled_router,
     ):
         """Prove that Auth is not cached."""
+        patch_field_auth(parkeervakken_schema, "parkeervakken", "regimes", "dagen", auth=["BAG/R"])
         url = reverse("dynamic_api:parkeervakken-parkeervakken-list")
-
-        models.DatasetField.objects.filter(name="dagen").update(auth="BAG/R")
 
         parkeervak = parkeervakken_parkeervak_model.objects.create(
             id="121138489666",
@@ -545,41 +589,45 @@ class TestAuth:
             begin_datum=None,
         )
 
+        # First fetch with BAG/R token
         token = fetch_auth_token(["BAG/R"])
         response = api_client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
         data = read_response_json(response)
 
-        assert "dagen" in data["_embedded"]["parkeervakken"][0]["regimes"][0].keys()
+        field_names = data["_embedded"]["parkeervakken"][0]["regimes"][0].keys()
+        assert "dagen" in field_names, field_names
 
+        # Fetch again without BAG/R token, should not return field
         public_response = api_client.get(url)
         public_data = read_response_json(public_response)
-
-        assert "dagen" not in public_data["_embedded"]["parkeervakken"][0]["regimes"][0].keys()
+        field_names = public_data["_embedded"]["parkeervakken"][0]["regimes"][0].keys()
+        assert "dagen" not in field_names, field_names
 
     def test_auth_on_dataset_protects_detail_view(
-        self, api_client, fetch_auth_token, afval_container, filled_router
+        self, api_client, fetch_auth_token, afval_schema, afval_container, filled_router
     ):
         """ Prove that protection at datasets level protects detail views """
+        patch_dataset_auth(afval_schema, auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-detail", args=[1])
-        models.Dataset.objects.filter(name="afvalwegingen").update(auth="BAG/R")
         response = api_client.get(url)
         assert response.status_code == 403, response.data
 
     def test_auth_on_datasettable_protects_detail_view(
-        self, api_client, fetch_auth_token, afval_container, filled_router
+        self, api_client, afval_schema, fetch_auth_token, afval_container, filled_router
     ):
         """ Prove that protection at datasets level protects detail views """
+        patch_table_auth(afval_schema, "containers", auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-detail", args=[1])
-        models.DatasetTable.objects.filter(name="containers").update(auth="BAG/R")
+
         response = api_client.get(url)
         assert response.status_code == 403, response.data
 
     def test_auth_on_dataset_detail_with_token_for_valid_scope(
-        self, api_client, fetch_auth_token, afval_container, filled_router
+        self, api_client, fetch_auth_token, afval_schema, afval_container, filled_router
     ):
         """ Prove that protection at datasets level protects detail views """
+        patch_dataset_auth(afval_schema, auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-containers-detail", args=[1])
-        models.Dataset.objects.filter(name="afvalwegingen").update(auth="BAG/R")
         token = fetch_auth_token(["BAG/R"])
         response = api_client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
         assert response.status_code == 200, response.data
@@ -595,76 +643,108 @@ class TestAuth:
         """Prove that having no scope on the dataset, but a
         mandatory query on ['id'] gives access to its detailview.
         """
+        patch_table_auth(parkeervakken_schema, "parkeervakken", auth=["DATASET/SCOPE"])
         parkeervakken_parkeervak_model.objects.create(id="121138489047")
-        models.Dataset.objects.filter(name="parkeervakken").update(auth="DATASET/SCOPE")
-        models.Profile.objects.create(
-            name="mag_niet",
-            scopes=["MAY/NOT"],
-            schema_data={
-                "datasets": {
-                    "parkeervakken": {
-                        "tables": {
-                            "parkeervakken": {"mandatoryFilterSets": [["buurtcode", "type"]]}
-                        }
-                    }
-                }
-            },
-        )
-        models.Profile.objects.create(
-            name="mag_wel",
-            scopes=["MAY/ENTER"],
-            schema_data={
-                "datasets": {
-                    "parkeervakken": {
-                        "tables": {
-                            "parkeervakken": {
-                                "mandatoryFilterSets": [["buurtcode", "type"], ["id"]]
+        models.Profile.create_for_schema(
+            ProfileSchema.from_dict(
+                {
+                    "name": "mag_niet",
+                    "scopes": ["MAY/NOT"],
+                    "datasets": {
+                        "parkeervakken": {
+                            "tables": {
+                                "parkeervakken": {
+                                    "permissions": "read",
+                                    "mandatoryFilterSets": [
+                                        ["buurtcode", "type"],
+                                    ],
+                                }
                             }
                         }
-                    }
+                    },
                 }
-            },
+            )
         )
-        models.Profile.objects.create(
-            name="alleen_volgnummer",
-            scopes=["ONLY/VOLGNUMMER"],
-            schema_data={
-                "datasets": {
-                    "parkeervakken": {
-                        "tables": {
-                            "parkeervakken": {"mandatoryFilterSets": [["id", "volgnummer"]]}
+        models.Profile.create_for_schema(
+            ProfileSchema.from_dict(
+                {
+                    "name": "mag_wel",
+                    "scopes": ["MAY/ENTER"],
+                    "datasets": {
+                        "parkeervakken": {
+                            "tables": {
+                                "parkeervakken": {
+                                    "permissions": "read",
+                                    "mandatoryFilterSets": [
+                                        ["buurtcode", "type"],
+                                        ["id"],
+                                    ],
+                                }
+                            }
                         }
-                    }
+                    },
                 }
-            },
+            )
         )
-        detail = reverse("dynamic_api:parkeervakken-parkeervakken-detail", args=["121138489047"])
-        detail_met_volgnummer = detail + "?volgnummer=3"
+        models.Profile.create_for_schema(
+            ProfileSchema.from_dict(
+                {
+                    "name": "alleen_volgnummer",
+                    "scopes": ["ONLY/VOLGNUMMER"],
+                    "datasets": {
+                        "parkeervakken": {
+                            "tables": {
+                                "parkeervakken": {
+                                    "permissions": "read",
+                                    "mandatoryFilterSets": [
+                                        ["id", "volgnummer"],
+                                    ],
+                                }
+                            }
+                        }
+                    },
+                }
+            )
+        )
+
+        detail_url = reverse(
+            "dynamic_api:parkeervakken-parkeervakken-detail", args=["121138489047"]
+        )
+        detail_met_volgnummer = detail_url + "?volgnummer=3"
+
         may_not = fetch_auth_token(["MAY/NOT"])
         may_enter = fetch_auth_token(["MAY/ENTER"])
         dataset_scope = fetch_auth_token(["DATASET/SCOPE"])
         profiel_met_volgnummer = fetch_auth_token(["ONLY/VOLGNUMMER"])
-        response = api_client.get(detail, HTTP_AUTHORIZATION=f"Bearer {may_not}")
+
+        response = api_client.get(detail_url, HTTP_AUTHORIZATION=f"Bearer {may_not}")
         assert response.status_code == 403, response.data
-        response = api_client.get(detail, HTTP_AUTHORIZATION=f"Bearer {may_enter}")
+
+        response = api_client.get(detail_url, HTTP_AUTHORIZATION=f"Bearer {may_enter}")
         assert response.status_code == 200, response.data
+
         response = api_client.get(detail_met_volgnummer, HTTP_AUTHORIZATION=f"Bearer {may_enter}")
         assert response.status_code == 200, response.data
-        response = api_client.get(detail, HTTP_AUTHORIZATION=f"Bearer {dataset_scope}")
+
+        response = api_client.get(detail_url, HTTP_AUTHORIZATION=f"Bearer {dataset_scope}")
         assert response.status_code == 200, response.data
-        response = api_client.get(detail, HTTP_AUTHORIZATION=f"Bearer {profiel_met_volgnummer}")
+
+        response = api_client.get(
+            detail_url, HTTP_AUTHORIZATION=f"Bearer {profiel_met_volgnummer}"
+        )
         assert response.status_code == 403, response.data
+
         response = api_client.get(
             detail_met_volgnummer, HTTP_AUTHORIZATION=f"Bearer {profiel_met_volgnummer}"
         )
         assert response.status_code == 200, response.data
 
     def test_auth_options_requests_are_not_protected(
-        self, api_client, afval_dataset, filled_router
+        self, api_client, afval_schema, afval_dataset, filled_router
     ):
         """Prove that options requests are not protected"""
+        patch_dataset_auth(afval_schema, auth=["BAG/R"])
         url = reverse("dynamic_api:afvalwegingen-clusters-list")
-        models.Dataset.objects.filter(name="afvalwegingen").update(auth="BAG/R")
         response = api_client.options(url)
         assert response.status_code == 200, response.data
 
@@ -687,43 +767,6 @@ class TestAuth:
         assert response.status_code == 400, data
         assert data["x-validation-errors"] == ["Invalid sort fields: datum_creatie"], data
 
-    def test_api_request_audit_logging(self, api_client, afval_container, filled_router):
-        """Prove that every request is logged into audit log."""
-
-        base_url = reverse("dynamic_api:afvalwegingen-containers-list")
-        url = f"{base_url}?_sort=datumCreatie"
-        with mock.patch("dso_api.dynamic_api.middleware.audit_log") as log_mock:
-            api_client.get(url)
-
-        assert len(log_mock.mock_calls) == 1
-
-        log_data = json.loads(log_mock.mock_calls[0].args[0])
-        assert log_data["path"] == base_url
-        assert log_data["method"] == "GET"
-        assert log_data["data"] == {"_sort": "datumCreatie"}
-        assert log_data["subject"] is None
-        assert "request_headers" in log_data
-
-    def test_api_authorized_request_audit_logging(
-        self, api_client, afval_container, fetch_auth_token, filled_router
-    ):
-        """Prove that every authorized request is logged into audit log."""
-
-        token = fetch_auth_token(["BAG/R"])
-        base_url = reverse("dynamic_api:afvalwegingen-containers-list")
-        url = f"{base_url}?_sort=datumCreatie"
-        with mock.patch("dso_api.dynamic_api.middleware.audit_log") as log_mock:
-            api_client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
-
-        assert len(log_mock.mock_calls) == 1
-
-        log_data = json.loads(log_mock.mock_calls[0].args[0])
-        assert log_data["path"] == base_url
-        assert log_data["method"] == "GET"
-        assert log_data["data"] == {"_sort": "datumCreatie"}
-        assert log_data["subject"] == "test@tester.nl"
-        assert "request_headers" in log_data
-
     def test_auth_on_table_schema_protects_camel_case(
         self, api_client, afval_schema, afval_dataset, filled_router
     ):
@@ -731,11 +774,9 @@ class TestAuth:
         leads to a 403 on the adresLoopafstand listview even if table name
         is in camelCase."""
         url = reverse("dynamic_api:afvalwegingen-adres_loopafstand-list")
-        models.DatasetTable.objects.filter(name="adres_loopafstand").update(auth="SOME_AUTH/SCOPE")
-        scopes_for_camelcased_table_name = fetch_scopes_for_dataset_table(
-            afval_schema["id"], "adresLoopafstand"
-        )
-        assert scopes_for_camelcased_table_name.table == {"SOME_AUTH/SCOPE"}
+        table_schema = apps.get_model("afvalwegingen", "adres_loopafstand").table_schema()
+        table_schema["auth"] = {"SOME_AUTH/SCOPE"}
+
         response = api_client.get(url)
         assert response.status_code == 403, response.data
 
@@ -778,7 +819,7 @@ class TestEmbedTemporalTables:
                     "title": "03630012052035.1",
                     "volgnummer": 1,
                 },
-                "schema": "https://schemas.data.amsterdam.nl/datasets/gebieden/gebieden#buurten",
+                "schema": "https://schemas.data.amsterdam.nl/datasets/gebieden/dataset#buurten",
                 "self": {
                     "href": "http://testserver/v1/gebieden/buurten/03630000000078/?volgnummer=1",
                     "identificatie": "03630000000078",
@@ -848,7 +889,7 @@ class TestEmbedTemporalTables:
                         "identificatie": "03630950000000",
                     }
                 ],
-                "schema": "https://schemas.data.amsterdam.nl/datasets/gebieden/gebieden#buurten",
+                "schema": "https://schemas.data.amsterdam.nl/datasets/gebieden/dataset#buurten",
                 "self": {
                     "href": "http://testserver/v1/gebieden/buurten/03630000000078/?volgnummer=1",
                     "title": "03630000000078.1",
@@ -862,10 +903,14 @@ class TestEmbedTemporalTables:
             "eindGeldigheid": None,
             "beginGeldigheid": None,
             "id": "03630000000078.1",
+            "ligtInWijkId": "03630012052035",
+            "_embedded": {
+                "ligtInWijk": None,
+            },
         }
         assert dict(data["_embedded"]["ggwgebieden"][0]) == {
             "_links": {
-                "schema": "https://schemas.data.amsterdam.nl/datasets/gebieden/gebieden#ggwgebieden",  # noqa: E501
+                "schema": "https://schemas.data.amsterdam.nl/datasets/gebieden/dataset#ggwgebieden",  # noqa: E501
                 "self": {
                     "href": "http://testserver/v1/gebieden/ggwgebieden/03630950000000/?volgnummer=1",  # noqa: E501
                     "title": "03630950000000.1",
@@ -878,6 +923,45 @@ class TestEmbedTemporalTables:
                         "title": "03630000000078.1",
                         "volgnummer": 1,
                         "identificatie": "03630000000078",
+                    },
+                ],
+            },
+            "geometrie": None,
+            "id": "03630950000000.1",
+            "eindGeldigheid": None,
+            "beginGeldigheid": None,
+            "naam": None,
+            "registratiedatum": None,
+        }
+
+    def test_through_extra_fields_for_nm_relation(
+        self, api_client, buurten_data, ggpgebieden_data, filled_router
+    ):
+        """Prove that extra through fields are showing up
+        latest volgnummer
+        """
+
+        url = reverse("dynamic_api:gebieden-ggpgebieden-list")
+        response = api_client.get(url)
+        data = read_response_json(response)
+        assert response.status_code == 200, data
+        assert dict(data["_embedded"]["ggpgebieden"][0]) == {
+            "_links": {
+                "schema": "https://schemas.data.amsterdam.nl/datasets/gebieden/dataset#ggpgebieden",  # noqa: E501
+                "self": {
+                    "href": "http://testserver/v1/gebieden/ggpgebieden/03630950000000/?volgnummer=1",  # noqa: E501
+                    "title": "03630950000000.1",
+                    "volgnummer": 1,
+                    "identificatie": "03630950000000",
+                },
+                "bestaatUitBuurten": [
+                    {
+                        "href": "http://testserver/v1/gebieden/buurten/03630000000078/?volgnummer=1",  # noqa: E501
+                        "title": "03630000000078.1",
+                        "volgnummer": 1,
+                        "identificatie": "03630000000078",
+                        "beginGeldigheid": "2020-01-04",
+                        "eindGeldigheid": None,
                     },
                 ],
             },
@@ -911,7 +995,7 @@ class TestEmbedTemporalTables:
                     "title": "03630000000078",
                     "identificatie": "03630000000078",
                 },
-                "schema": "https://schemas.data.amsterdam.nl/datasets/meldingen/meldingen#statistieken",  # noqa: E501
+                "schema": "https://schemas.data.amsterdam.nl/datasets/meldingen/dataset#statistieken",  # noqa: E501
                 "self": {
                     "href": "http://testserver/v1/meldingen/statistieken/1/",
                     "title": "1",
@@ -934,7 +1018,7 @@ class TestEmbedTemporalTables:
         assert response.status_code == 200, data
         assert data == {
             "_links": {
-                "schema": "https://schemas.data.amsterdam.nl/datasets/meldingen/meldingen#statistieken",  # noqa: E501
+                "schema": "https://schemas.data.amsterdam.nl/datasets/meldingen/dataset#statistieken",  # noqa: E501
                 "self": {
                     "href": "http://testserver/v1/meldingen/statistieken/1/",
                     "title": "1",
@@ -950,7 +1034,7 @@ class TestEmbedTemporalTables:
             "_embedded": {
                 "buurt": {
                     "_links": {
-                        "schema": "https://schemas.data.amsterdam.nl/datasets/gebieden/gebieden#buurten",  # noqa: E501
+                        "schema": "https://schemas.data.amsterdam.nl/datasets/gebieden/dataset#buurten",  # noqa: E501
                         "self": {
                             "href": "http://testserver/v1/gebieden/buurten/03630000000078/?volgnummer=2",  # noqa: E501
                             "title": "03630000000078.2",
@@ -964,6 +1048,10 @@ class TestEmbedTemporalTables:
                     "eindGeldigheid": None,
                     "beginGeldigheid": None,
                     "id": "03630000000078.2",
+                    "ligtInWijkId": None,
+                    "_embedded": {
+                        "ligtInWijk": None,
+                    },
                 }
             },
         }
@@ -1126,9 +1214,9 @@ class TestExportFormats:
         "csv": (
             as_is,
             "text/csv; charset=utf-8",
-            b"Id,Clusterid,Geometry,Serienummer,Datumcreatie,Eigenaarnaam,Datumleegmaken\r\n"
-            b"1,c1,SRID=28992;POINT (10 10),foobar-123,2021-01-03,Dataservices,"
-            b"2021-01-03T12:13:14\r\n",
+            b"Id,Clusterid,Serienummer,Eigenaarnaam,Datumcreatie,Datumleegmaken,Geometry\r\n"
+            b"1,c1,foobar-123,Dataservices,2021-01-03,2021-01-03T12:13:14,SRID=28992;"
+            b"POINT (10 10)\r\n",
         ),
         "geojson": (
             orjson.loads,
@@ -1151,8 +1239,8 @@ class TestExportFormats:
                             "id": 1,
                             "clusterId": "c1",
                             "serienummer": "foobar-123",
-                            "datumCreatie": "2021-01-03",
                             "eigenaarNaam": "Dataservices",
+                            "datumCreatie": "2021-01-03",
                             "datumLeegmaken": "2021-01-03T12:13:14",
                         },
                     }
@@ -1197,15 +1285,15 @@ class TestExportFormats:
         "csv": (
             as_is,
             "text/csv; charset=utf-8",
-            b"Id,Clusterid,Geometry,Serienummer,Datumcreatie,Eigenaarnaam,Datumleegmaken\r\n"
-            b"1,c1,SRID=28992;POINT (10 10),foobar-123,2021-01-03,Dataservices,"
-            b"2021-01-03T12:13:14\r\n"
-            b"2,c1,SRID=28992;POINT (10 10),foobar-123,2021-01-03,Dataservices,"
-            b"2021-01-03T12:13:14\r\n"
-            b"3,c1,SRID=28992;POINT (10 10),foobar-123,2021-01-03,Dataservices,"
-            b"2021-01-03T12:13:14\r\n"
-            b"4,c1,SRID=28992;POINT (10 10),foobar-123,2021-01-03,Dataservices,"
-            b"2021-01-03T12:13:14\r\n",
+            b"Id,Clusterid,Serienummer,Eigenaarnaam,Datumcreatie,Datumleegmaken,Geometry\r\n"
+            b"1,c1,foobar-123,Dataservices,2021-01-03,2021-01-03T12:13:14,SRID=28992"
+            b";POINT (10 10)\r\n"
+            b"2,c1,foobar-123,Dataservices,2021-01-03,2021-01-03T12:13:14,SRID=28992"
+            b";POINT (10 10)\r\n"
+            b"3,c1,foobar-123,Dataservices,2021-01-03,2021-01-03T12:13:14,SRID=28992"
+            b";POINT (10 10)\r\n"
+            b"4,c1,foobar-123,Dataservices,2021-01-03,2021-01-03T12:13:14,SRID=28992"
+            b";POINT (10 10)\r\n",
         ),
         "geojson": (
             orjson.loads,
@@ -1286,7 +1374,7 @@ class TestExportFormats:
         "csv": (
             as_is,
             "text/csv; charset=utf-8",
-            b"Id,Clusterid,Geometry,Serienummer,Datumcreatie,Eigenaarnaam,Datumleegmaken\r\n",
+            b"Id,Clusterid,Serienummer,Eigenaarnaam,Datumcreatie,Datumleegmaken,Geometry\r\n",
         ),
         "geojson": (
             orjson.loads,
@@ -1338,9 +1426,9 @@ class TestExportFormats:
         assert isinstance(response, StreamingResponse)
         data = read_response(response)
         assert data == (
-            "Id,Clusterid,Geometry,Serienummer,Datumcreatie,Eigenaarnaam,Datumleegmaken"
+            "Id,Clusterid,Serienummer,Eigenaarnaam,Datumcreatie,Datumleegmaken,Geometry"
             ",Cluster.Id,Cluster.Status\r\n"
-            "1,c1,SRID=28992;POINT (10 10),foobar-123,2021-01-03,Dataservices,2021-01-03T12:13:14"
+            "1,c1,foobar-123,Dataservices,2021-01-03,2021-01-03T12:13:14,SRID=28992;POINT (10 10)"
             ",c1,valid\r\n"
         )
 
@@ -1371,7 +1459,7 @@ class TestExportFormats:
 
         # fields don't include bestaatUitBuurten
         assert data == (
-            "Naam,Geometrie,Eindgeldigheid,Begingeldigheid,Registratiedatum,Id\r\n"
+            "Registratiedatum,Naam,Begingeldigheid,Eindgeldigheid,Geometrie,Id\r\n"
             ",,,,,03630950000000.1\r\n"
         )
 
@@ -1379,9 +1467,9 @@ class TestExportFormats:
         "csv": (
             as_is,
             "text/csv; charset=utf-8",
-            b"Id,Clusterid,Geometry,Serienummer,Datumcreatie,Eigenaarnaam,Datumleegmaken\r\n"
-            b"1,c1,SRID=28992;POINT (10 10),foobar-123,2021-01-03,Dataservices,"
-            b"2021-01-03T12:13:14\r\n",
+            b"Id,Clusterid,Serienummer,Eigenaarnaam,Datumcreatie,Datumleegmaken,Geometry\r\n"
+            b"1,c1,foobar-123,Dataservices,2021-01-03,2021-01-03T12:13:14,SRID=28992"
+            b";POINT (10 10)\r\n",
         ),
         "geojson": (
             orjson.loads,
@@ -1394,12 +1482,12 @@ class TestExportFormats:
                     "type": "Point",
                 },
                 "properties": {
+                    "id": 1,
                     "clusterId": "c1",
+                    "serienummer": "foobar-123",
+                    "eigenaarNaam": "Dataservices",
                     "datumCreatie": "2021-01-03",
                     "datumLeegmaken": "2021-01-03T12:13:14",
-                    "eigenaarNaam": "Dataservices",
-                    "id": 1,
-                    "serienummer": "foobar-123",
                 },
                 "crs": {
                     "properties": {"name": "urn:ogc:def:crs:EPSG::4326"},

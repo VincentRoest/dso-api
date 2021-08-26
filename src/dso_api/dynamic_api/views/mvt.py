@@ -1,5 +1,7 @@
 """Mapbox Vector Tiles (MVT) views of geographic datasets."""
 
+import logging
+import time
 from typing import Tuple
 
 from django.contrib.gis.db.models import GeometryField
@@ -8,21 +10,15 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.urls.base import reverse
 from django.views.generic import TemplateView
-from schematools.contrib.django.models import Dataset
-from schematools.utils import to_snake_case, toCamelCase
+from schematools.contrib.django.models import Dataset, get_field_schema
+from schematools.utils import to_snake_case
 from vectortiles.postgis.views import MVTView
 
-from dso_api.dynamic_api import permissions
 from dso_api.dynamic_api.datasets import get_active_datasets
+from dso_api.dynamic_api.permissions import CheckPermissionsMixin
 from dso_api.dynamic_api.views import APIIndexView
 
-
-def get_geo_tables(schema):
-    """Yields names of tables that have a geometry field."""
-    for table in schema.tables:
-        for field in table.fields:
-            if field.is_geo:
-                yield to_snake_case(table.name)
+logger = logging.getLogger(__name__)
 
 
 class DatasetMVTIndexView(APIIndexView):
@@ -74,9 +70,11 @@ class DatasetMVTSingleView(TemplateView):
         context = super().get_context_data(**kwargs)
 
         ds = get_object_or_404(Dataset, name=kwargs["dataset_name"])
-
-        geo_tables = sorted(get_geo_tables(ds.schema))
-
+        geo_tables = sorted(
+            to_snake_case(table.name)
+            for table in ds.schema.tables
+            if any(field.is_geo for field in table.fields)
+        )
         if len(geo_tables) == 0:
             raise Http404("Dataset does not support MVT") from None
 
@@ -87,10 +85,8 @@ class DatasetMVTSingleView(TemplateView):
         return context
 
 
-class DatasetMVTView(MVTView):
+class DatasetMVTView(CheckPermissionsMixin, MVTView):
     """An MVT view for a single dataset."""
-
-    permission_classes = [permissions.HasOAuth2Scopes]
 
     def setup(self, request, *args, **kwargs):
         super().setup(request, *args, **kwargs)
@@ -104,14 +100,23 @@ class DatasetMVTView(MVTView):
         except KeyError:
             raise Http404("Invalid dataset") from None
 
-        self._unauthorized = permissions.get_unauthorized_fields(request, model)
         self.model = model
-        self.check_permissions(request)
+        self.check_permissions(request, [self.model])
 
     def get(self, request, *args, **kwargs):
         kwargs.pop("dataset_name")
         kwargs.pop("table_name")
-        return super().get(request, *args, **kwargs)
+
+        t0 = time.perf_counter_ns()
+        result = super().get(request, *args, **kwargs)
+        logging.info(
+            "retrieved tile for %s (%d bytes) in %.3fs",
+            request.path,
+            len(result.content),
+            (time.perf_counter_ns() - t0) * 1e-9,
+        )
+
+        return result
 
     def get_queryset(self):
         return self.model.objects.all()
@@ -119,10 +124,11 @@ class DatasetMVTView(MVTView):
     @property
     def vector_tile_fields(self) -> Tuple[str]:
         geom_name = self.vector_tile_geom_name
+        user_scopes = self.request.user_scopes
         return tuple(
             f.name
             for f in self.model._meta.get_fields()
-            if f.name != geom_name and toCamelCase(f.name) not in self._unauthorized
+            if f.name != geom_name and user_scopes.has_field_access(get_field_schema(f))
         )
 
     @property
@@ -133,9 +139,12 @@ class DatasetMVTView(MVTView):
 
         raise FieldDoesNotExist()
 
-    def check_permissions(self, request) -> None:
-        for permission in self.permission_classes:
-            if not permission().has_permission(request, self, [self.model]):
-                raise PermissionDenied()
-        if self.vector_tile_geom_name in self._unauthorized:
+    def check_permissions(self, request, models) -> None:
+        """Override CheckPermissionsMixin to add extra checks"""
+        super().check_permissions(request, models)
+
+        # Check whether the geometry field can be accessed, otherwise reading MVT is pointless.
+        model_field = self.model._meta.get_field(self.vector_tile_geom_name)
+        field_schema = get_field_schema(model_field)
+        if not self.request.user_scopes.has_field_access(field_schema):
             raise PermissionDenied()

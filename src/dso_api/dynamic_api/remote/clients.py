@@ -15,7 +15,8 @@ import urllib3
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from more_ds.network.url import URL
-from rest_framework.exceptions import NotAuthenticated, NotFound, ParseError
+from rest_framework.exceptions import NotFound, ParseError, PermissionDenied
+from rest_framework.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
 from schematools.types import DatasetTableSchema
 from urllib3 import HTTPResponse
 
@@ -47,7 +48,6 @@ class RemoteClient:
         url = self._make_url(path, query_params)
 
         # Using urllib directly instead of requests for performance
-        logger.debug("Forwarding call to %s", url)
         headers = self._get_headers(request)
 
         http_pool = self._get_http_pool()
@@ -62,23 +62,24 @@ class RemoteClient:
             )
         except (TimeoutError, urllib3.exceptions.TimeoutError) as e:
             # Socket timeout
-            logger.error("Proxy call failed, timeout from remote server: %s", e)
+            logger.error("Proxy call to %s failed, timeout from remote server: %s", url, e)
             raise GatewayTimeout() from e
         except (OSError, urllib3.exceptions.HTTPError) as e:
             # Socket connect / SSL error (HTTPError is the base class for errors)
-            logger.error("Proxy call failed, error when connecting to server: %s", e)
+            logger.error("Proxy call to %s failed, error when connecting to server: %s", url, e)
             raise ServiceUnavailable(str(e)) from e
+
+        level = logging.ERROR if response.status >= 400 else logging.INFO
+        logger.log(level, "Proxy call to %s, status %s: %s", url, response.status, response.reason)
 
         if response.status == 200:
             return orjson.loads(response.data)
 
-        level = logging.ERROR if response.status >= 500 else logging.DEBUG
-        logger.log(level, "Proxy call failed, status %s: %s", response.status, response.reason)
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("  Response body: %s", response.data)
 
         self._raise_http_error(response)
-        assert False, "_raise_http_error should raise an exception"
+        raise Exception("_raise_http_error should have raised an exception")
 
     def _get_headers(self, request):  # noqa: C901
         """Collect the headers to submit to the remote service.
@@ -97,7 +98,7 @@ class RemoteClient:
             forward = client_ip
 
         headers = {
-            "Accept": "application/json; charset=utf-8",
+            "Accept": "application/json",
             "X-Forwarded-For": forward,
         }
 
@@ -151,11 +152,7 @@ class RemoteClient:
             detail_message = response.data.decode()
 
         if response.status == 400:  # "bad request"
-            if response.data == b"Missing required MKS headers":
-                # Didn't pass the MKS_APPLICATIE / MKS_GEBRUIKER headers.
-                # Shouldn't occur anymore since it's JWT-token based now.
-                raise NotAuthenticated("Internal credentials are missing")
-            elif content_type == "application/problem+json":
+            if content_type == "application/problem+json":
                 # Translate proper "Bad Request" to REST response
                 raise RemoteAPIException(
                     title=ParseError.default_detail,
@@ -165,9 +162,17 @@ class RemoteClient:
                 )
             else:
                 raise BadGateway(detail_message)
-        elif response.status == 403:  # "forbidden"
-            # Return 403 to client as well
-            raise NotAuthenticated(detail_message)
+        elif response.status in (HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN):
+            # We translate 401 to 403 because 401 MUST have a WWW-Authenticate
+            # header in the response and we can't easily set that from here.
+            # Also, RFC 7235 says we MUST NOT change such a header,
+            # which presumably includes making one up.
+            raise RemoteAPIException(
+                title=PermissionDenied.default_detail,
+                detail=f"{response.status} from remote: {response.data!r}",
+                status_code=HTTP_403_FORBIDDEN,
+                code=PermissionDenied.default_code,
+            )
         elif response.status == 404:  # "not found"
             # Return 404 to client (in DRF format)
             if content_type == "application/problem+json":
@@ -213,7 +218,7 @@ class AuthForwardingClient(RemoteClient):
         if 300 <= response.status <= 399 and (
             "/oauth/authorize" in response.headers.get("Location", "")
         ):
-            raise NotAuthenticated("Invalid token")
+            raise PermissionDenied("Invalid token")
 
 
 class HCBRKClient(RemoteClient):
@@ -223,8 +228,8 @@ class HCBRKClient(RemoteClient):
     __http_pool = None
     __http_pool_lock = threading.Lock()
 
-    def get_headers(self, request):
-        headers = super().get_headers(self, request)
+    def _get_headers(self, request):
+        headers = super()._get_headers(request)
 
         headers["X-Api-Key"] = settings.HAAL_CENTRAAL_API_KEY
         headers["accept"] = "application/hal+json"

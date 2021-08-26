@@ -107,6 +107,9 @@ ENV/
 # vim
 *.swp
 
+# VSCode
+.vscode/
+
 # Project specific
 .DS_Store
 
