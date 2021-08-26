@@ -14,7 +14,7 @@ exclude = '''
 
 [metadata]
 name = "dso-vincentroest"
-version = 0.0.1
+version = "0.0.1"
 author = "dso"
 author_email = "dso@gmail.com"
 description = "dso"
@@ -24,7 +24,4 @@ url = "https://github.com/vincentroest/dso-api"
 [options]
 package_dir = "src"
 packages = "find:"
-python_requires = >=3.9
-
-[options.packages.find]
-where = "src"
+python_requires = ">=3.9"
