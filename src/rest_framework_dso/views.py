@@ -42,14 +42,14 @@ def get_view_name(view):
         name = getattr(view.schema_generator, "title", "Schema")
 
     # Use the title for instances
-    response = getattr(view, "response", None)
-    suffix = getattr(view, "suffix", None)
+    # response = getattr(view, "response", None)
+    # suffix = getattr(view, "suffix", None)
 
-    if suffix == "Instance" and response:
-        if response.status_code == 200:
-            name = response.data["_links"]["self"]["title"]
-        else:
-            name = f"{response.reason_phrase} ({response.status_code})"
+    # if suffix == "Instance" and response:
+    # if response.status_code == 200:
+    #     name = response.data["_links"]["self"]["title"]
+    # else:
+    #     name = f"{response.reason_phrase} ({response.status_code})"
     return name
 
 

@@ -66,6 +66,7 @@ class DynamicAPIIndexView(APIIndexView):
 
     def get_datasets(self) -> Iterable[Dataset]:
         datasets = super().get_datasets()
+        print(datasets)
         if self.path:
             datasets = [ds for ds in datasets if ds.path.startswith(self.path)]
         return datasets
@@ -168,7 +169,10 @@ class DynamicRouter(routers.DefaultRouter):
 
         # Same for remote API's
         api_datasets = list(get_active_datasets().endpoint_enabled())
+
         remote_routes = self._build_remote_viewsets(api_datasets)
+
+        print(remote_routes)
 
         datasets = db_datasets + api_datasets
 
