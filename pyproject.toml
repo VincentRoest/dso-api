@@ -11,3 +11,25 @@ exclude = '''
   | dist
 )/
 '''
+
+[metadata]
+name = dso-vincentroest
+version = 0.0.1
+author = dso
+author_email = dso@gmail.com
+description = dso
+long_description = file: README.md
+url = https://github.com/vincentroest/dso-api
+classifiers =
+    Programming Language :: Python :: 3
+    License :: OSI Approved :: MIT License
+    Operating System :: OS Independent
+
+[options]
+package_dir =
+    = src
+packages = find:
+python_requires = >=3.9
+
+[options.packages.find]
+where = src
