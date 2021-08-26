@@ -41,7 +41,7 @@ from rest_framework_dso.embedding import (
     get_serializer_lookups,
     parse_expand_scope,
 )
-from rest_framework_dso.fields import DSOGeometryField, LinksField
+from rest_framework_dso.fields import DSOGeometryField, LinksField, parse_request_fields
 from rest_framework_dso.serializer_helpers import ReturnGenerator, peek_iterable
 
 
@@ -64,6 +64,17 @@ class ExpandMixin:
         """Tell whether the 'fields_to_expand' is set by the code instead of request."""
         return self._fields_to_expand is not empty
 
+    @cached_property
+    def is_toplevel(self):
+        """Tell whether the current serializer is the top-level serializer.
+        Nested serializers shouldn't handle request-parsing logic.
+        """
+        # The extra parent check tests for serializers that are initialized with many=True
+        root = self.root
+        return (self is root) or (
+            isinstance(self.parent, serializers.ListSerializer) and self.parent is root
+        )
+
     @property
     def fields_to_expand(self) -> Union[List[str], bool]:
         """Retrieve the requested expand, 2 possible values:
@@ -75,10 +86,7 @@ class ExpandMixin:
             # Instead of retrieving this from request,
             # the expand can be defined using the serializer __init__.
             return False if self._fields_to_expand is False else cast(list, self._fields_to_expand)
-        elif (self.root is self) or (
-            isinstance(self.parent, serializers.ListSerializer)
-            and self.parent is self.parent.root  # serializer initialized with many=True
-        ):
+        elif self.is_toplevel:
             # This is the top-level serializer. Parse from request
             request = self.context["request"]
             return parse_expand_scope(
@@ -99,6 +107,18 @@ class ExpandMixin:
     def expanded_fields(self) -> List[EmbeddedFieldMatch]:
         """Retrieve the embedded fields for this request."""
         raise NotImplementedError("child serializer should implement this")
+
+    @property
+    def field_name_prefix(self) -> str:
+        """For debugging, give the fully dotted field name."""
+        serializer = self
+        path = [""]  # end with dot
+        while serializer is not None:
+            if serializer.field_name:  # is empty for ListSerializer
+                path.append(serializer.field_name)
+            serializer = serializer.parent
+
+        return ".".join(reversed(path)) if len(path) > 1 else ""
 
 
 class DSOListSerializer(ExpandMixin, serializers.ListSerializer):
@@ -150,6 +170,7 @@ class DSOListSerializer(ExpandMixin, serializers.ListSerializer):
             self.child,
             expand_scope,
             allow_m2m=request.accepted_renderer.supports_m2m,
+            prefix=self.field_name_prefix,
         )
 
     @property
@@ -199,6 +220,7 @@ class DSOModelListSerializer(DSOListSerializer):
 
         # Find the the best approach to iterate over the results.
         if prefetch_lookups := self.get_prefetch_lookups():
+
             # When there are related fields, avoid an N-query issue by prefetching.
             # ChunkedQuerySetIterator makes sure the queryset is still read in partial chunks.
             queryset_iterator = ChunkedQuerySetIterator(data.prefetch_related(*prefetch_lookups))
@@ -271,6 +293,10 @@ class DSOSerializer(ExpandMixin, serializers.Serializer):
     fields_param = "_fields"  # so ?_fields=.. gives a result
     _default_list_serializer_class = DSOListSerializer
 
+    def __init__(self, *args, fields_to_display=empty, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._fields_to_display = fields_to_display
+
     @classmethod
     def many_init(cls, *args, **kwargs):
         """The initialization for many=True.
@@ -307,6 +333,30 @@ class DSOSerializer(ExpandMixin, serializers.Serializer):
 
         return list_serializer_class(*args, **list_kwargs)
 
+    @property
+    def fields_to_display(self) -> Optional[List[str]]:
+        """Define which fields should be included only."""
+        if self._fields_to_display is not empty:
+            # Instead of retrieving this from request,
+            # the expand can be defined using the serializer __init__.
+            return cast(List[str], self._fields_to_display)
+        elif self.is_toplevel:
+            # This is the top-level serializer. Parse from request
+            request = self.context["request"]
+            request_fields = request.GET.get(self.fields_param)
+            if not request_fields and "fields" in request.GET:
+                request_fields = request.GET["fields"]  # DSO 1.0
+
+            return parse_request_fields(request_fields)
+        else:
+            # Sub field should have received it's fields_to_display override via __init__().
+            return None
+
+    @fields_to_display.setter
+    def fields_to_display(self, fields: List[str]):
+        """Allow serializers to assign 'fields_to_expand' later (e.g. in bind())."""
+        self._fields_to_display = fields
+
     def get_fields(self):
         # .get() is needed to print serializer fields during debugging
         request = self.context.get("request")
@@ -321,11 +371,7 @@ class DSOSerializer(ExpandMixin, serializers.Serializer):
 
         # Adjust the serializer based on the request,
         # remove fields if a subset is requested.
-        request_fields = request.GET.get(self.fields_param)
-        if not request_fields and "fields" in request.GET:
-            request_fields = request.GET["fields"]  # DSO 1.0
-
-        if request_fields:
+        if request_fields := self.fields_to_display:
             display_fields = self.get_fields_to_display(fields, request_fields)
             fields = OrderedDict(
                 [
@@ -354,7 +400,7 @@ class DSOSerializer(ExpandMixin, serializers.Serializer):
 
         # Split into fields to include and fields to omit (-fieldname).
         display_fields, omit_fields = set(), set()
-        for field in request_fields.split(","):
+        for field in request_fields:
             if field.startswith("-"):
                 omit_fields.add(field[1:])
             else:
@@ -395,7 +441,10 @@ class DSOSerializer(ExpandMixin, serializers.Serializer):
             raise ParseError("Embedding objects is not supported for this output format")
 
         return get_expanded_fields_by_scope(
-            self, expand_scope, allow_m2m=request.accepted_renderer.supports_m2m
+            self,
+            expand_scope,
+            allow_m2m=request.accepted_renderer.supports_m2m,
+            prefix=self.field_name_prefix,
         )
 
     @cached_property

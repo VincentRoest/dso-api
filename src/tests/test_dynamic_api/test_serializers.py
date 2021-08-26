@@ -3,13 +3,19 @@ from datetime import date
 import pytest
 from django.apps import apps
 from django.core.validators import EmailValidator, URLValidator
-from schematools.contrib.django.auth_backend import RequestProfile
-from schematools.contrib.django.models import Profile
+from schematools.permissions import UserScopes
+from schematools.types import ProfileSchema
 
 from dso_api.dynamic_api.serializers import serializer_factory
 from rest_framework_dso.fields import EmbeddedField
 from rest_framework_dso.views import DSOViewMixin
-from tests.utils import normalize_data, unlazy
+from tests.utils import (
+    api_request_with_scopes,
+    normalize_data,
+    patch_field_auth,
+    to_drf_request,
+    unlazy,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -64,9 +70,7 @@ class TestDynamicSerializer:
 
         # Generate serializers from models
         ContainerSerializer = serializer_factory(afval_container_model)
-        # Important note is that ClusterSerializer is initiated as flat,
-        # not allowing relations to resolve.
-        ClusterSerializer = serializer_factory(afval_cluster_model, flat=True)
+        ClusterSerializer = serializer_factory(afval_cluster_model)
 
         # Prove that EmbeddedField is created.
         assert ContainerSerializer.Meta.embedded_fields == ["cluster"]
@@ -95,7 +99,7 @@ class TestDynamicSerializer:
                     "href": "http://testserver/v1/afvalwegingen/clusters/123.456/",
                     "title": "123.456",
                 },
-                "schema": "https://schemas.data.amsterdam.nl/datasets/afvalwegingen/afvalwegingen#containers",  # noqa: E501
+                "schema": "https://schemas.data.amsterdam.nl/datasets/afvalwegingen/dataset#containers",  # noqa: E501
                 "self": {
                     "href": "http://testserver/v1/afvalwegingen/containers/2/",
                     "title": "2",
@@ -111,11 +115,12 @@ class TestDynamicSerializer:
         }
 
     @staticmethod
-    def test_expand(drf_request, afval_schema, afval_container_model, afval_cluster):
+    def test_expand(afval_schema, afval_container_model, afval_cluster):
         """Prove expanding works.
 
         The _embedded section is generated, using the cluster serializer.
         """
+        drf_request = to_drf_request(api_request_with_scopes(["BAG/R"]))
         drf_request.dataset = afval_schema
         ContainerSerializer = serializer_factory(afval_container_model)
         afval_container = afval_container_model.objects.create(id=2, cluster=afval_cluster)
@@ -129,7 +134,7 @@ class TestDynamicSerializer:
         data = normalize_data(container_serializer.data)
         assert data == {
             "_links": {
-                "schema": "https://schemas.data.amsterdam.nl/datasets/afvalwegingen/afvalwegingen#containers",  # noqa: E501
+                "schema": "https://schemas.data.amsterdam.nl/datasets/afvalwegingen/dataset#containers",  # noqa: E501
                 "self": {
                     "href": "http://testserver/v1/afvalwegingen/containers/2/",
                     "title": "2",
@@ -153,7 +158,7 @@ class TestDynamicSerializer:
                             "href": "http://testserver/v1/afvalwegingen/clusters/123.456/",
                             "title": "123.456",
                         },
-                        "schema": "https://schemas.data.amsterdam.nl/datasets/afvalwegingen/afvalwegingen#clusters",  # noqa: E501
+                        "schema": "https://schemas.data.amsterdam.nl/datasets/afvalwegingen/dataset#clusters",  # noqa: E501
                     },
                     "id": "123.456",
                     "status": "open",
@@ -162,11 +167,12 @@ class TestDynamicSerializer:
         }
 
     @staticmethod
-    def test_expand_none(drf_request, afval_schema, afval_container_model):
+    def test_expand_none(afval_schema, afval_container_model):
         """Prove that expanding None values doesn't crash.
 
         The _embedded part has a None value instead.
         """
+        drf_request = to_drf_request(api_request_with_scopes(["BAG/R"]))
         drf_request.dataset = afval_schema
         ContainerSerializer = serializer_factory(afval_container_model)
         container_without_cluster = afval_container_model.objects.create(
@@ -181,7 +187,7 @@ class TestDynamicSerializer:
         data = normalize_data(container_serializer.data)
         assert data == {
             "_links": {
-                "schema": "https://schemas.data.amsterdam.nl/datasets/afvalwegingen/afvalwegingen#containers",  # noqa: E501
+                "schema": "https://schemas.data.amsterdam.nl/datasets/afvalwegingen/dataset#containers",  # noqa: E501
                 "self": {
                     "href": "http://testserver/v1/afvalwegingen/containers/3/",
                     "title": "3",
@@ -198,12 +204,13 @@ class TestDynamicSerializer:
         }
 
     @staticmethod
-    def test_expand_broken_relation(drf_request, afval_schema, afval_container_model):
+    def test_expand_broken_relation(afval_schema, afval_container_model):
         """Prove that expanding non-existing FK values values doesn't crash.
            Cluster will not be expanded to a url, because the pk_only_optimization
            has been switched off for hyperlinked related fields.
         The _embedded part has a None value instead.
         """
+        drf_request = to_drf_request(api_request_with_scopes(["BAG/R"]))
         drf_request.dataset = afval_schema
         ContainerSerializer = serializer_factory(afval_container_model)
         container_invalid_cluster = afval_container_model.objects.create(
@@ -222,7 +229,7 @@ class TestDynamicSerializer:
                     "href": "http://testserver/v1/afvalwegingen/containers/4/",
                     "title": "4",
                 },
-                "schema": "https://schemas.data.amsterdam.nl/datasets/afvalwegingen/afvalwegingen#containers",  # noqa: E501
+                "schema": "https://schemas.data.amsterdam.nl/datasets/afvalwegingen/dataset#containers",  # noqa: E501
             },
             "id": 4,
             "clusterId": 99,
@@ -235,26 +242,27 @@ class TestDynamicSerializer:
         }
 
     @staticmethod
-    def test_dataset_url_prefix(
-        drf_request,
+    def test_dataset_path(
         afval_dataset,
         afval_container_model,
         afval_cluster,
         afval_cluster_model,
         filled_router,
     ):
-        """Prove dataset url_prefix works.
+        """Prove dataset url sub paths works.
 
         The schema in _links contains correct URLs.
         """
-        afval_dataset.url_prefix = "test"
-        afval_dataset.save()
+        drf_request = to_drf_request(api_request_with_scopes(["BAG/R"]))
+        afval_dataset.path = "test/" + afval_dataset.path
+
         # Update dataset in instance cache
         afval_container_model._dataset = afval_dataset
         afval_cluster_model._dataset = afval_dataset
         drf_request.dataset = afval_dataset.schema
         ContainerSerializer = serializer_factory(afval_container_model, 0)
         afval_container = afval_container_model.objects.create(id=2, cluster=afval_cluster)
+
         # Prove that expands work on object-detail level
         container_serializer = ContainerSerializer(
             afval_container,
@@ -264,7 +272,7 @@ class TestDynamicSerializer:
         data = normalize_data(container_serializer.data)
         assert data == {
             "_links": {
-                "schema": "https://schemas.data.amsterdam.nl/datasets/test/afvalwegingen#containers",  # noqa: E501
+                "schema": "https://schemas.data.amsterdam.nl/datasets/test/afvalwegingen/dataset#containers",  # noqa: E501
                 "self": {
                     "href": "http://testserver/v1/afvalwegingen/containers/2/",
                     "title": "2",
@@ -288,7 +296,7 @@ class TestDynamicSerializer:
                             "href": "http://testserver/v1/afvalwegingen/clusters/123.456/",
                             "title": "123.456",
                         },
-                        "schema": "https://schemas.data.amsterdam.nl/datasets/test/afvalwegingen#clusters",  # noqa: E501
+                        "schema": "https://schemas.data.amsterdam.nl/datasets/test/afvalwegingen/dataset#clusters",  # noqa: E501
                     },
                     "id": "123.456",
                     "status": "open",
@@ -304,7 +312,7 @@ class TestDynamicSerializer:
     ):
         """Show backwards"""
         drf_request.dataset = gebieden_schema
-        drf_request.dataset_temporal_slice = None
+        drf_request.table_temporal_slice = None
         stadsdelen_model = gebieden_models["stadsdelen"]
         wijken_model = gebieden_models["wijken"]
         stadsdeel = stadsdelen_model.objects.create(
@@ -330,7 +338,7 @@ class TestDynamicSerializer:
                     "volgnummer": 1,
                     "identificatie": "0363",
                 },
-                "schema": "https://schemas.data.amsterdam.nl/datasets/gebieden/gebieden#stadsdelen",  # NoQA
+                "schema": "https://schemas.data.amsterdam.nl/datasets/gebieden/dataset#stadsdelen",  # NoQA
                 "wijk": [
                     {
                         "href": "http://testserver/v1/gebieden/wijken/03630000000001/?volgnummer=1",  # NoQA
@@ -377,7 +385,7 @@ class TestDynamicSerializer:
                     "href": "http://testserver/v1/vestiging/vestiging/1/",
                     "title": "1",
                 },
-                "schema": "https://schemas.data.amsterdam.nl/datasets/vestiging/vestiging#vestiging",  # noqa: E501
+                "schema": "https://schemas.data.amsterdam.nl/datasets/vestiging/dataset#vestiging",  # noqa: E501
                 "postAdres": {
                     "href": "http://testserver/v1/vestiging/adres/3/",
                     "title": "3",
@@ -404,7 +412,7 @@ class TestDynamicSerializer:
                     "href": "http://testserver/v1/vestiging/vestiging/2/",
                     "title": "2",
                 },
-                "schema": "https://schemas.data.amsterdam.nl/datasets/vestiging/vestiging#vestiging",  # noqa: E501
+                "schema": "https://schemas.data.amsterdam.nl/datasets/vestiging/dataset#vestiging",  # noqa: E501
                 "postAdres": {
                     "href": "http://testserver/v1/vestiging/adres/3/",
                     "title": "3",
@@ -428,7 +436,7 @@ class TestDynamicSerializer:
         data = normalize_data(adres_serializer.data)
         assert data == {
             "_links": {
-                "schema": "https://schemas.data.amsterdam.nl/datasets/vestiging/vestiging#adres",
+                "schema": "https://schemas.data.amsterdam.nl/datasets/vestiging/dataset#adres",
                 "self": {
                     "href": "http://testserver/v1/vestiging/adres/3/",
                     "title": "3",
@@ -502,7 +510,7 @@ class TestDynamicSerializer:
                 "self": {
                     "href": "http://testserver/v1/parkeervakken/parkeervakken/121138489047/",
                 },
-                "schema": "https://schemas.data.amsterdam.nl/datasets/parkeervakken/parkeervakken#parkeervakken",  # noqa: E501
+                "schema": "https://schemas.data.amsterdam.nl/datasets/parkeervakken/dataset#parkeervakken",  # noqa: E501
             },
             "geometry": None,
             "id": "121138489047",
@@ -580,7 +588,7 @@ class TestDynamicSerializer:
         assert data == {
             "_links": {
                 "self": {"href": "http://testserver/v1/parkeervakken/parkeervakken/121138489047/"},
-                "schema": "https://schemas.data.amsterdam.nl/datasets/parkeervakken/parkeervakken#parkeervakken",  # noqa: E501
+                "schema": "https://schemas.data.amsterdam.nl/datasets/parkeervakken/dataset#parkeervakken",  # noqa: E501
             },
             "geometry": None,
             "id": "121138489047",
@@ -706,27 +714,34 @@ class TestDynamicSerializer:
         drf_request, fietspaaltjes_schema, fietspaaltjes_model, fietspaaltjes_data
     ):
         """ Prove that only first letter is seen in Profile allows only it."""
-
-        Profile.objects.create(
-            name="test_1",
-            scopes="[]",
-            schema_data={
-                "datasets": {
-                    "fietspaaltjes": {
-                        "tables": {"fietspaaltjes": {"fields": {"area": "letters:1"}}}
-                    }
-                }
-            },
-        )
-        drf_request.auth_profile = RequestProfile(drf_request)
-
         # does not have scope for Dataset or Table
-        drf_request.is_authorized_for = lambda scopes=None: False
+        drf_request.dataset = fietspaaltjes_schema
+        drf_request.user_scopes = UserScopes(
+            {},
+            request_scopes=[],
+            all_profiles=[
+                ProfileSchema.from_dict(
+                    {
+                        "name": "only_first",
+                        "datasets": {
+                            "fietspaaltjes": {
+                                "tables": {
+                                    "fietspaaltjes": {
+                                        "fields": {"area": "letters:1"},
+                                    }
+                                }
+                            }
+                        },
+                    }
+                ),
+            ],
+        )
+
+        # Make sure the field is not readable by default, so profiles are activated
+        patch_field_auth(fietspaaltjes_schema, "fietspaaltjes", "area", auth=["FOO/BAR"])
+        assert drf_request.user_scopes.get_active_profile_datasets("fietspaaltjes")
 
         FietspaaltjesSerializer = serializer_factory(fietspaaltjes_model)
-
-        drf_request.dataset = fietspaaltjes_schema
-
         fietspaaltjes_serializer = FietspaaltjesSerializer(
             fietspaaltjes_data, context={"request": drf_request}
         )
@@ -738,26 +753,32 @@ class TestDynamicSerializer:
         drf_request, fietspaaltjes_schema, fietspaaltjes_model, fietspaaltjes_data
     ):
         """ Prove that only first letter is seen in Profile allows only it in listing. """
-
-        Profile.objects.create(
-            name="test_1",
-            scopes="[]",
-            schema_data={
-                "datasets": {
-                    "fietspaaltjes": {
-                        "tables": {"fietspaaltjes": {"fields": {"area": "letters:1"}}}
-                    }
-                }
-            },
-        )
-        drf_request.auth_profile = RequestProfile(drf_request)
-
-        # does not have scope for Dataset or Table
-        drf_request.is_authorized_for = lambda scopes=None: False
-        FietspaaltjesSerializer = serializer_factory(fietspaaltjes_model)
-
         drf_request.dataset = fietspaaltjes_schema
+        drf_request.user_scopes = UserScopes(
+            {},
+            request_scopes=[],
+            all_profiles=[
+                ProfileSchema.from_dict(
+                    {
+                        "name": "only_first",
+                        "datasets": {
+                            "fietspaaltjes": {
+                                "tables": {
+                                    "fietspaaltjes": {
+                                        "fields": {"area": "letters:1"},
+                                    }
+                                }
+                            }
+                        },
+                    }
+                )
+            ],
+        )
 
+        # Make sure the field is not readable by default, so profiles are activated
+        patch_field_auth(fietspaaltjes_schema, "fietspaaltjes", "area", auth=["FOO/BAR"])
+
+        FietspaaltjesSerializer = serializer_factory(fietspaaltjes_model)
         fietspaaltjes_serializer = FietspaaltjesSerializer(
             fietspaaltjes_model.objects.all(),
             context={"request": drf_request},

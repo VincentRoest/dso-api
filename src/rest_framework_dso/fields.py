@@ -1,11 +1,20 @@
-from typing import Type
+from typing import Optional, Type
 
 from django.db import models
 from django.db.models.fields.related import RelatedField
 from django.db.models.fields.reverse_related import ForeignObjectRel
 from django.utils.functional import cached_property
+from more_itertools import first
 from rest_framework import serializers
 from rest_framework_gis.fields import GeometryField
+
+
+def parse_request_fields(fields: Optional[str]):
+    if not fields:
+        return None
+
+    # TODO: support nesting, perform validation
+    return fields.split(",")
 
 
 class AbstractEmbeddedField:
@@ -174,9 +183,10 @@ class LinksField(serializers.HyperlinkedIdentityField):
             output.update({"title": str(value)})
 
         if value.is_temporal():
-            temporal_fieldname = value.get_dataset_schema().temporal.get("identifier")
+            temporal_fieldname = value.table_schema().temporal.identifier
             temporal_value = getattr(value, temporal_fieldname)
-            id_fieldname = value.get_dataset_schema().get("identifier")
+            id_fieldname = first(value.table_schema().identifier)
+
             id_value = getattr(value, id_fieldname)
             output.update({temporal_fieldname: temporal_value, id_fieldname: id_value})
 

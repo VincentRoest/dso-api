@@ -3,15 +3,7 @@ from typing import List
 import pytest
 from schematools.contrib.django.db import create_tables
 
-from dso_api.dynamic_api.permissions import fetch_scopes_for_dataset_table, fetch_scopes_for_model
 from tests.utils import read_response_xml, xml_element_to_dict
-
-
-@pytest.fixture(autouse=True)
-def clear_caches():
-    yield  # run tests first
-    fetch_scopes_for_dataset_table.cache_clear()
-    fetch_scopes_for_model.cache_clear()
 
 
 @pytest.mark.django_db
@@ -40,7 +32,8 @@ def test_wfs_index(api_client, afval_dataset, fietspaaltjes_dataset, filled_rout
                     {
                         "name": "production",
                         "api_url": f"{base}/v1/wfs/afvalwegingen/",
-                        "specification_url": f"{base}/v1/wfs/afvalwegingen/",
+                        "specification_url": f"{base}/v1/wfs/afvalwegingen/"
+                        + "?SERVICE=WFS&REQUEST=GetCapabilities",
                         "documentation_url": f"{base}/v1/docs/wfs-datasets/afvalwegingen.html",
                     }
                 ],
@@ -49,7 +42,7 @@ def test_wfs_index(api_client, afval_dataset, fietspaaltjes_dataset, filled_rout
                     {"type": "MVT", "url": f"{base}/v1/mvt/afvalwegingen/"},
                 ],
                 "api_authentication": None,
-                "api_type": "unknown",
+                "api_type": "WFS",
                 "organization_name": "Gemeente Amsterdam",
                 "organization_oin": "00000001002564440000",
                 "contact": {
@@ -69,7 +62,8 @@ def test_wfs_index(api_client, afval_dataset, fietspaaltjes_dataset, filled_rout
                     {
                         "name": "production",
                         "api_url": f"{base}/v1/wfs/fietspaaltjes/",
-                        "specification_url": f"{base}/v1/wfs/fietspaaltjes/",
+                        "specification_url": f"{base}/v1/wfs/fietspaaltjes/"
+                        + "?SERVICE=WFS&REQUEST=GetCapabilities",
                         "documentation_url": f"{base}/v1/docs/wfs-datasets/fietspaaltjes.html",
                     }
                 ],
@@ -78,7 +72,7 @@ def test_wfs_index(api_client, afval_dataset, fietspaaltjes_dataset, filled_rout
                     {"type": "MVT", "url": f"{base}/v1/mvt/fietspaaltjes/"},
                 ],
                 "api_authentication": None,
-                "api_type": "unknown",
+                "api_type": "WFS",
                 "organization_name": "Gemeente Amsterdam",
                 "organization_oin": "00000001002564440000",
                 "contact": {

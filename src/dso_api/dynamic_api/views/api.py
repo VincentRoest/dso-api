@@ -18,6 +18,7 @@ from django.db import models
 from django.http import Http404, JsonResponse
 from django.urls import reverse
 from django.utils.translation import gettext as _
+from more_itertools import first
 from rest_framework import viewsets
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -26,6 +27,7 @@ from schematools.contrib.django.models import Dataset, DynamicModel
 from dso_api.dynamic_api import filterset, locking, permissions, serializers
 from dso_api.dynamic_api.datasets import get_active_datasets
 from rest_framework_dso import fields
+from rest_framework_dso.renderers import BrowsableAPIRenderer, HALJSONRenderer
 from rest_framework_dso.views import DSOViewMixin
 
 
@@ -54,13 +56,14 @@ class TemporalRetrieveModelMixin:
         queryset = super().get_queryset()
 
         if self.request.versioned and self.model.is_temporal():
-            if self.request.dataset_temporal_slice is not None:
-                temporal_value = self.request.dataset_temporal_slice["value"]
-                start_field, end_field = self.request.dataset_temporal_slice["fields"]
+            if self.request.table_temporal_slice is not None:
+                temporal_value = self.request.table_temporal_slice["value"]
+                start_field, end_field = self.request.table_temporal_slice["fields"]
                 queryset = queryset.filter(**{f"{start_field}__lte": temporal_value}).filter(
                     models.Q(**{f"{end_field}__gte": temporal_value})
                     | models.Q(**{f"{end_field}__isnull": True})
                 )
+
         return queryset
 
     def get_object(self, queryset=None):
@@ -73,19 +76,19 @@ class TemporalRetrieveModelMixin:
         if not self.request.versioned or not self.model.is_temporal():
             return super().get_object()
 
+        table_schema = self.model.table_schema()
         pk = self.kwargs.get("pk")
-        pk_field = self.request.dataset.identifier
+        pk_field = first(table_schema.identifier)
         if pk_field != "pk":
             queryset = queryset.filter(
                 models.Q(**{pk_field: pk}) | models.Q(pk=pk)
             )  # fallback to full id search.
         else:
             queryset = queryset.filter(pk=pk)
-
-        identifier = self.request.dataset.temporal.get("identifier", None)
+        identifier = table_schema.temporal.identifier
 
         # Filter queryset using GET parameters, if any.
-        for field in queryset.model._table_schema.fields:
+        for field in queryset.model.table_schema().fields:
             if field.name != pk_field and field.name in self.request.GET:
                 queryset = queryset.filter(**{field.name: self.request.GET[field.name]})
 
@@ -144,40 +147,15 @@ class DynamicApiViewSet(
         return super().paginator
 
 
-def _get_viewset_api_docs(
-    model: Type[DynamicModel],
-    serializer_class: Type[serializers.DynamicSerializer],
-    filterset_class: Type[filterset.DynamicFilterSet],
-    ordering_fields: list,
-) -> str:
+def _get_viewset_api_docs(model: Type[DynamicModel]) -> str:
     """Generate the API documentation header for the viewset."""
-    lines = []
-    if description := model.table_schema().description:
-        lines.append(f"{description}\n\n")
-
-    if filterset_class and filterset_class.base_filters:
-        lines.append("The following fields can be used as filter with `?FIELDNAME=...`:\n")
-        for name, filter_field in filterset_class.base_filters.items():
-            description = filter_field.label  # other kwarg appear in .extra[".."]
-            lines.append(f"* {name}=*{description}*")
-
-    embedded_fields = getattr(serializer_class.Meta, "embedded_fields", [])
-    if embedded_fields:
-        if lines:
-            lines.append("")
-        lines.append("The following fields can be expanded with `?_expandScope=...`:\n")
-        lines.extend(f"* {name}" for name in embedded_fields)
-        lines.append("\nExpand everything using `_expand=true`.")
-
-    lines.append(
-        "\nUse `?_fields=field1,field2` to limit which fields to receive,"
-        "\nor `?_fields=-field3,-field4` to exclude specific fields from the response"
+    # NOTE: currently not using model.get_dataset_path() as the docs don't do either.
+    description = model.table_schema().description
+    docs_path = f"datasets/{model.get_dataset_id()}.html#{model.get_table_id()}"
+    return (
+        f"{description or ''}\n\nSee the documentation at: "
+        f"<https://api.data.amsterdam.nl/v1/docs/{docs_path}>"
     )
-
-    if ordering_fields:
-        lines.append("\nUse `?_sort=field,field2,-field3` to sort on fields")
-
-    return "\n".join(lines)
 
 
 def _get_ordering_fields(
@@ -220,16 +198,14 @@ def viewset_factory(model: Type[DynamicModel]) -> Type[DynamicApiViewSet]:
     ordering_fields = _get_ordering_fields(serializer_class)
 
     attrs = {
-        "__doc__": _get_viewset_api_docs(
-            model, serializer_class, filterset_class, ordering_fields
-        ),
+        "__doc__": _get_viewset_api_docs(model),
         "model": model,
         "queryset": model.objects.all(),  # also for OpenAPI schema parsing.
         "serializer_class": serializer_class,
         "filterset_class": filterset_class,
         "ordering_fields": ordering_fields,
         "dataset_id": model._dataset_schema["id"],
-        "table_id": model._table_schema["id"],
+        "table_id": model.table_schema()["id"],
     }
     return type(f"{model.__name__}ViewSet", (DynamicApiViewSet,), attrs)
 
@@ -240,6 +216,9 @@ class APIIndexView(APIView):
     """
 
     schema = None  # exclude from schema
+
+    # Restrict available formats to JSON and api
+    renderer_classes = [BrowsableAPIRenderer, HALJSONRenderer]
 
     # For browsable API
     name = "DSO-API"
@@ -287,8 +266,8 @@ class APIIndexView(APIView):
                 },
                 "environments": self.get_environments(ds, base),
                 "related_apis": self.get_related_apis(ds, base),
-                "api_authentication": ds.schema.auth,
-                "api_type": "unknown",
+                "api_authentication": list(ds.schema.auth) or None,
+                "api_type": self.api_type,
                 "organization_name": "Gemeente Amsterdam",
                 "organization_oin": "00000001002564440000",
                 "contact": {

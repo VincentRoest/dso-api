@@ -1,16 +1,6 @@
 import mapbox_vector_tile
 import pytest
 
-from dso_api.dynamic_api.permissions import fetch_scopes_for_dataset_table, fetch_scopes_for_model
-
-
-@pytest.fixture(autouse=True)
-def clear_caches():
-    yield  # run tests first
-    fetch_scopes_for_dataset_table.cache_clear()
-    fetch_scopes_for_model.cache_clear()
-
-
 CONTENT_TYPE = "application/vnd.mapbox-vector-tile"
 
 
@@ -49,7 +39,7 @@ def test_mvt_index(api_client, afval_dataset, fietspaaltjes_dataset, filled_rout
                     {"type": "WFS", "url": f"{base}/v1/wfs/afvalwegingen/"},
                 ],
                 "api_authentication": None,
-                "api_type": "unknown",
+                "api_type": "MVT",
                 "organization_name": "Gemeente Amsterdam",
                 "organization_oin": "00000001002564440000",
                 "contact": {
@@ -78,7 +68,7 @@ def test_mvt_index(api_client, afval_dataset, fietspaaltjes_dataset, filled_rout
                     {"type": "WFS", "url": f"{base}/v1/wfs/fietspaaltjes/"},
                 ],
                 "api_authentication": None,
-                "api_type": "unknown",
+                "api_type": "MVT",
                 "organization_name": "Gemeente Amsterdam",
                 "organization_oin": "00000001002564440000",
                 "contact": {
