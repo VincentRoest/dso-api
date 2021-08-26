@@ -20,10 +20,6 @@ author_email = dso@gmail.com
 description = dso
 long_description = file: README.md
 url = https://github.com/vincentroest/dso-api
-classifiers =
-    Programming Language :: Python :: 3
-    License :: OSI Approved :: MIT License
-    Operating System :: OS Independent
 
 [options]
 package_dir =
