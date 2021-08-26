@@ -13,7 +13,7 @@ exclude = '''
 '''
 
 [metadata]
-name = "dso-vincentroest"
+name = "dso_vincentroest"
 version = "0.0.1"
 author = "dso"
 author_email = "dso@gmail.com"
