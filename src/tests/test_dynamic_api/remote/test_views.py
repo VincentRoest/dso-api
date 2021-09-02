@@ -424,7 +424,6 @@ HCBRK_NATUURLIJKPERSOON = (
     "}]}}"
 )
 
-
 DSO_NATUURLIJK_PERSOON = {
     "schema": "https://schemas.data.amsterdam.nl/datasets/remote/hcbrk/dataset#kadasternatuurlijkpersonen",  # noqa: E501
     "naam": {
@@ -447,6 +446,26 @@ DSO_NATUURLIJK_PERSOON = {
     },
 }
 
+DSO_NATUURLIJK_PERSOON_UNAUTH = {
+    "schema": "https://schemas.data.amsterdam.nl/datasets/remote/hcbrk/dataset#kadasternatuurlijkpersonen",  # noqa: E501
+    "naam": {
+        "aanhef": "Geachte heer Jansens",
+        "voornamen": "Willem",
+        "geslachtsnaam": "Jansens",
+        "aanschrijfwijze": "W. Jansens",
+        "gebruikInLopendeTekst": "de heer Jansens",
+    },
+    "domein": "NL.IMKAD.Persoon",
+    "geboorte": {"datum": {"dag": 1, "jaar": 1971, "datum": "1971-11-01", "maand": 11}},
+    "woonadres": {"adresregel1": "Burggang 1D-9", "adresregel2": "4331AD MIDDELBURG"},
+    "omschrijving": "Willem Jansens",
+    "identificatie": "70882239",
+    "heeftPartnerschap": [{"naam": {"geslachtsnaam": "Jansens"}}],
+    "geslachtsaanduiding": "man",
+    "_links": {
+        "self": {"href": "http://testserver/v1/remote/hcbrk/kadasternatuurlijkpersonen/70882239/"}
+    },
+}
 
 HCBRK_ONROERENDE_ZAAK = (
     '{"identificatie":"76870487970000","domein":"NL.IMKAD.KadastraalO'
@@ -489,7 +508,6 @@ HCBRK_ONROERENDE_ZAAK = (
     "r.nl/esd/huidigebevragingen/v1/adressen/adresseerbareobjecten/{a"
     'dressen.adresseerbaarObjectIdentificatie}","templated":true}]}}'
 )
-
 
 DSO_ONROERENDE_ZAAK = {
     "schema": "https://schemas.data.amsterdam.nl/datasets/remote/hcbrk/dataset#kadastraalonroerendezaken",  # noqa: E501
@@ -546,40 +564,85 @@ DSO_ONROERENDE_ZAAK = {
 }
 
 
+DSO_ONROERENDE_ZAAK_UNAUTH = {
+    field: value
+    for field, value in DSO_ONROERENDE_ZAAK.items()
+    if field
+    not in (
+        "koopsom",
+        "aardCultuurBebouwd",
+        "toelichtingBewaarder",
+        "hypotheekIdentificaties",
+        "zakelijkGerechtigdeIdentificaties",
+        "privaatrechtelijkeBeperkingIdentificaties",
+    )
+}
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "case",
     [
-        ("kadasternatuurlijkpersonen", 70882239, HCBRK_NATUURLIJKPERSOON, DSO_NATUURLIJK_PERSOON),
-        ("kadastraalonroerendezaken", 76870487970000, HCBRK_ONROERENDE_ZAAK, DSO_ONROERENDE_ZAAK),
+        {
+            # Natuurlijke persoon, with full authorisation.
+            "table": "kadasternatuurlijkpersonen",
+            "ident": 70882239,
+            "scopes": ["BRK/RS", "BRK/RSN", "TEST/VOORNAAMPARTNER"],
+            "from_hcbrk": HCBRK_NATUURLIJKPERSOON,
+            "output": DSO_NATUURLIJK_PERSOON,
+        },
+        {
+            # Natuurlijke persoon, with minimal authorisation.
+            "table": "kadasternatuurlijkpersonen",
+            "ident": 70882239,
+            "scopes": ["BRK/RS"],
+            "from_hcbrk": HCBRK_NATUURLIJKPERSOON,
+            "output": DSO_NATUURLIJK_PERSOON_UNAUTH,
+        },
+        {
+            # Onroerende zaak, with full authorisation.
+            "table": "kadastraalonroerendezaken",
+            "ident": 76870487970000,
+            "scopes": ["BRK/RS", "BRK/RO"],
+            "from_hcbrk": HCBRK_ONROERENDE_ZAAK,
+            "output": DSO_ONROERENDE_ZAAK,
+        },
+        {
+            # Onroerende zaak, with minimal authorisation.
+            "table": "kadastraalonroerendezaken",
+            "ident": 76870487970000,
+            "scopes": ["BRK/RS"],
+            "from_hcbrk": HCBRK_ONROERENDE_ZAAK,
+            "output": DSO_ONROERENDE_ZAAK_UNAUTH,
+        },
     ],
 )
 def test_hcbrk_client(api_client, fetch_auth_token, router, hcbrk_dataset, urllib3_mocker, case):
     """Test HCBRK remote client."""
 
-    table, ident, from_hcbrk, output = case
-
-    def get_natuurlijkpersoon(request):
+    def respond(request):
         assert "Authorization" not in request.headers
         assert "X-Api-Key" in request.headers
         assert request.body is None
-        return (200, set(), from_hcbrk)
+        return (200, set(), case["from_hcbrk"])
+
+    table, ident = case["table"], case["ident"]
 
     router.reload()
     urllib3_mocker.add_callback(
         "GET",
         f"/esd/bevragen/v1/{table}/{ident}",
-        callback=get_natuurlijkpersoon,
+        callback=respond,
         content_type="application/json",
     )
 
     url = reverse(f"dynamic_api:hcbrk-{table}-detail", kwargs={"pk": str(ident)})
-    token = fetch_auth_token(["BRK/RS"])
+    token = fetch_auth_token(case["scopes"])
     response = api_client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
     data = read_response_json(response)
 
     assert response.status_code == 200, data
-    assert data == output
+    assert data == case["output"]
 
 
 REMOTE_SCHEMA = DatasetTableSchema.from_dict(
