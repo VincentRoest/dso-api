@@ -18,6 +18,7 @@ def get_patterns(router_urls):
         path("", include(router_urls)),
         # Swagger, OpenAPI and OAuth2 login logic.
         path("oauth2-redirect.html", views.oauth2_redirect, name="oauth2-redirect"),
+        path("graphql", views.graphql),
     ]
 
 

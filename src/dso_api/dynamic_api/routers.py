@@ -92,7 +92,10 @@ class DynamicAPIIndexView(APIIndexView):
                 {
                     "type": "MVT",
                     "url": base
-                    + reverse("dynamic_api:mvt-single-dataset", kwargs={"dataset_name": ds.name}),
+                    + reverse(
+                        "dynamic_api:mvt-single-dataset",
+                        kwargs={"dataset_name": ds.name},
+                    ),
                 },
             ]
         return related_apis
@@ -106,6 +109,7 @@ class DynamicRouter(routers.DefaultRouter):
     def __init__(self):
         super().__init__(trailing_slash=True)
         self.all_models = {}
+        self.all_viewsets = {}
         self.static_routes = []
         self._openapi_urls = []
         self._index_urls = []
@@ -243,6 +247,9 @@ class DynamicRouter(routers.DefaultRouter):
 
                 logger.debug("Created viewset %s", url_prefix)
                 viewset = viewset_factory(model)
+
+                self.all_viewsets[f"{dataset_id}-{model.get_table_id()}"] = viewset
+
                 table_id = to_snake_case(model.get_table_id())
                 tmp_router.register(
                     prefix=url_prefix,
@@ -256,18 +263,38 @@ class DynamicRouter(routers.DefaultRouter):
         """Initialize viewsets that are are proxies for remote URLs"""
         tmp_router = routers.SimpleRouter()
 
+        # Because dataset are related, we need to 'prewarm'
+        # the datatasets cache (in schematools)
         for dataset in api_datasets:
             dataset_id = dataset.schema.id
 
+            new_models = {}
+            dataset.enable_db = True
+            for model in dataset.create_models(base_app_name="dso_api.dynamic_api.remote"):
+                new_models[model._meta.model_name] = model
+            dataset.enable_db = False
+
             for table in dataset.schema.tables:
                 # Determine the URL prefix for the model
-                url_prefix = self.make_url(dataset.path, table.id)
-                serializer_class = remote_serializer_factory(table)
+                url_prefix = self.make_url(dataset.url_prefix, dataset_id, table.id)
+
+                model_for_table = new_models[f"{table.id}"]
+
+                serializer_class = remote_serializer_factory(table, model_for_table)
+                print(serializer_class)
+
                 viewset = remote_viewset_factory(
                     endpoint_url=dataset.endpoint_url,
                     serializer_class=serializer_class,
                     table_schema=table,
                 )
+
+                setattr(viewset, "model", model_for_table)
+
+                self.all_viewsets[
+                    f"remote-{to_snake_case(dataset_id)}-{to_snake_case(table.id)}"
+                ] = viewset
+
                 tmp_router.register(
                     prefix=url_prefix,
                     viewset=viewset,

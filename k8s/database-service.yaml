@@ -1,12 +1,10 @@
 apiVersion: v1
 kind: Service
 metadata:
-  annotations:
-    kompose.cmd: kompose convert -f ../docker-compose.yml
-    kompose.version: 1.22.0 (HEAD)
-  creationTimestamp: null
+  namespace: dso-namespace
   labels:
-    io.kompose.service: database
+    team: datapunt
+    networking/namespace: dso
   name: database
 spec:
   ports:
@@ -14,6 +12,7 @@ spec:
       port: 5432
       targetPort: 5432
   selector:
-    io.kompose.service: database
+    team: datapunt
+    networking/namespace: dso
 status:
   loadBalancer: {}

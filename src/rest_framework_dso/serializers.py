@@ -514,6 +514,77 @@ class DSOSerializer(ExpandMixin, serializers.Serializer):
 
         return None
 
+    def create(self, validated_data):
+        # from dso_api.dynamic_api.serializers import DynamicSerializer
+        # from schematools.utils import to_snake_case
+        # mapping = DynamicSerializer().serializer_field_mapping
+        # inverse_mapping = {v: k for k, v in mapping.items()}
+
+        # def set_relations_recursively(model, data, current_key=None):
+        #     print(model._meta)
+        #     if isinstance(data, dict):
+        #         for key, value in data.items():
+        #             print(key)
+        #             # expand
+        #             if isinstance(value, list):
+        #                 listfield = self.fields.pop(key)
+        #                 serializer_for_list = listfield.child
+        #                 list_model_meta = type("Meta", (), {"app_label": "graphql_remote"})
+        #                 try:
+        #                     list_model = type(
+        #                         key,
+        #                         (models.Model,),
+        #                         {
+        #                             **dict(
+        #                                 {
+        #                                     # convert serializer field to django field
+        #                                     to_snake_case(f): inverse_mapping[k.__class__]()
+        #                                     for f, k in serializer_for_list.fields.items()
+        #                                 }
+        #                             ),
+        #                             "__module__": f"{key}",
+        #                             "Meta": list_model_meta,
+        #                         },
+        #                     )
+        #                 except Exception as e:
+        #                     print(e)
+
+        #                 list_items = [list_model(**item) for item in data[key]]
+        #                 print(list_items)
+        #                 # TRIES TO COMMIT TO DB
+        #                 # model.bankrekeningen.set(list_items, commit=False)
+
+        #             else:
+        #                 setattr(model, key, value)
+        #     elif isinstance(data, list):
+        #         for value in data:
+        #             if isinstance(value, list):
+        #                 print("skipping", value)
+        #                 # setattr(model, current_key, [])
+        #                 # set_relations_recursively(model, value, current_key)
+        #             else:
+        #                 setattr(model, current_key, value)
+
+        #     return model
+
+        flat_model = self.context["view"].model()
+        # flat_model = set_relations_recursively(flat_model, validated_data)
+
+        # print(vars(flat_model))
+        # print(dir(flat_model))
+        print(flat_model)
+
+        setattr(flat_model, "model", flat_model)
+        # print(flat_model.get_queryset())
+        return flat_model
+
+    def update(self, instance, validated_data):
+        print(instance)
+        for k, f in validated_data.items():
+            setattr(instance, k, f)
+        # instance.save()
+        return instance
+
 
 class DSOModelSerializer(DSOSerializer, serializers.HyperlinkedModelSerializer):
     """DSO-compliant serializer for Django models.

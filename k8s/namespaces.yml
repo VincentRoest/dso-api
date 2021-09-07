@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sociaal-namespace
+  labels:
+    api: sociaal
+    team: datateam-sociaal
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dso-namespace
+  labels:
+    api: dso
+    team: datapunt

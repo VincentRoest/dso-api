@@ -93,6 +93,7 @@ def filterset_factory(model: Type[DynamicModel]) -> Type[DynamicFilterSet]:
         "model": model,
         "fields": fields,
     }
+
     meta = type("Meta", (), meta_attrs)
     return type(f"{model.__name__}FilterSet", (DynamicFilterSet,), {"Meta": meta, **filters})
 

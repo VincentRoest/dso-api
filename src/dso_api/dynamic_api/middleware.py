@@ -1,6 +1,11 @@
+import json
+import logging
+
 from django.utils.deprecation import MiddlewareMixin
 from schematools.contrib.django.models import Profile
 from schematools.permissions import UserScopes
+
+audit_log = logging.getLogger("dso_api.audit")
 
 
 class DatasetMiddleware(MiddlewareMixin):
@@ -72,3 +77,33 @@ class TemporalTableMiddleware(MiddlewareMixin):
                 )
 
         return None
+
+
+class RequestAuditLoggingMiddleware(MiddlewareMixin):
+    def process_view(self, request, view_func, view_args, view_kwargs):
+        data = None
+        try:
+            data = json.loads(request.body)
+            if data is None:
+                raise ValueError
+        except ValueError:
+            if request.method == "GET":
+                data = request.GET
+            else:
+                data = request.POST
+        except Exception as e:
+            print(e)
+
+        subject = None
+        if hasattr(request, "get_token_subject"):
+            subject = request.get_token_subject
+
+        log = dict(
+            path=request.path,
+            method=request.method,
+            request_headers=repr(request.META),
+            subject=subject,
+            data=data,
+        )
+
+        audit_log.debug(json.dumps(log))

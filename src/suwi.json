@@ -1,0 +1,77 @@
+{
+  "type": "dataset",
+  "id": "suwi",
+  "title": "suwi",
+  "status": "beschikbaar",
+  "version": "0.0.1",
+  "identifier": "bsn",
+  "tables": [
+    {
+      "id": "verzoeken",
+      "type": "table",
+      "schema": {
+        "$id": "https://github.com/Amsterdam/schemas/suwi/verzoeken.json",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "identifier": [
+          "bsn"
+        ],
+        "required": [
+          "schema",
+          "bsn"
+        ],
+        "display": "bsn",
+        "properties": {
+          "schema": {
+            "$ref": "https://schemas.data.amsterdam.nl/schema@v1.1.1#/definitions/schema"
+          },
+          "bsn": {
+            "type": "string",
+            "description": "BSN"
+          },
+          "geslacht": {
+            "type": "string",
+            "description": "geslacht van persoon"
+          },
+          "voornaam": {
+            "type": "string",
+            "description": "voornaam van persoon"
+          },
+          "achternaam": {
+            "type": "string",
+            "description": "achternaam van persoon"
+          },
+          "adres": {
+            "type": "string",
+            "description": "adres van persoon"
+          },
+          "postcode": {
+            "type": "string",
+            "description": "postcode van persoon adres"
+          },
+          "land": {
+            "type": "string",
+            "description": "nationaliteit"
+          },
+          "geboortedatum": {
+            "type": "string",
+            "format": "date",
+            "description": "geboortedatum.",
+            "auth": "SUWI/TOETS_PLUS"
+          },
+          "toetsInkomenTeHoog": {
+            "auth": "SUWI/TOETS",
+            "type": "boolean",
+            "description": "is de toets inkomen te hoog of te laag?"
+          },
+          "toetsVermogenTeHoog": {
+            "auth": "SUWI/TOETS",
+            "type": "boolean",
+            "description": "is de toets vermogen te hoog of te laag?"
+          }
+        }
+      }
+    }
+  ]
+}
