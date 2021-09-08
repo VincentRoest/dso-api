@@ -16,5 +16,3 @@ pre-commit == 2.13.0
 django-debug-toolbar == 3.2.1
 django-extensions == 3.1.2
 
-# graphql
-graphene-django == 3.0.0b7

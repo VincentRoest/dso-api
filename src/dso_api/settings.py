@@ -72,8 +72,6 @@ INSTALLED_APPS = [
     "schematools.contrib.django",
     # Own apps
     "dso_api.dynamic_api",
-    # graphql
-    "graphene_django",
 ]
 
 MIDDLEWARE = [
@@ -122,7 +120,10 @@ TEMPLATES = [
 if not DEBUG:
     # Keep templates in memory
     TEMPLATES[0]["OPTIONS"]["loaders"] = [
-        ("django.template.loaders.cached.Loader", TEMPLATES[0]["OPTIONS"]["loaders"]),
+        (
+            "django.template.loaders.cached.Loader",
+            TEMPLATES[0]["OPTIONS"]["loaders"],
+        ),
     ]
 
 WSGI_APPLICATION = "dso_api.wsgi.application"
@@ -160,7 +161,11 @@ if SENTRY_DSN:
     )
     sentry_sdk.utils.MAX_STRING_LENGTH = 2048  # for WFS FILTER exceptions
 
-base_log_fmt = {"time": "%(asctime)s", "name": "%(name)s", "level": "%(levelname)s"}
+base_log_fmt = {
+    "time": "%(asctime)s",
+    "name": "%(name)s",
+    "level": "%(levelname)s",
+}
 log_fmt = base_log_fmt.copy()
 log_fmt["message"] = "%(message)s"
 
@@ -188,9 +193,21 @@ LOGGING = {
     },
     "root": {"level": "INFO", "handlers": ["console"]},
     "loggers": {
-        "opencensus": {"handlers": ["console"], "level": DJANGO_LOG_LEVEL, "propagate": False},
-        "django": {"handlers": ["console"], "level": DJANGO_LOG_LEVEL, "propagate": False},
-        "dso_api": {"handlers": ["console"], "level": DSO_API_LOG_LEVEL, "propagate": False},
+        "opencensus": {
+            "handlers": ["console"],
+            "level": DJANGO_LOG_LEVEL,
+            "propagate": False,
+        },
+        "django": {
+            "handlers": ["console"],
+            "level": DJANGO_LOG_LEVEL,
+            "propagate": False,
+        },
+        "dso_api": {
+            "handlers": ["console"],
+            "level": DSO_API_LOG_LEVEL,
+            "propagate": False,
+        },
         "dso_api.audit": {
             "handlers": ["audit_console"],
             "level": DSO_API_LOG_LEVEL,
@@ -397,6 +414,3 @@ DATASETS_EXCLUDE = env.list("DATASETS_EXCLUDE", default=None)
 HAAL_CENTRAAL_API_KEY = os.getenv("HAAL_CENTRAAL_API_KEY", "UNKNOWN")
 HAAL_CENTRAAL_KEYFILE = os.getenv("HC_KEYFILE")
 HAAL_CENTRAAL_CERTFILE = os.getenv("HC_CERTFILE")
-
-
-GRAPHENE = {"SCHEMA": "dso_api.dynamic_api.schema.create_schema"}
